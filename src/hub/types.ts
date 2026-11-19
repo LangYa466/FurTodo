@@ -9,13 +9,7 @@ import type {
   OrgSummary,
 } from '../auth/github';
 import type {QuotaCounts} from '../config';
-import type {
-  ApiEntity,
-  AttachmentInfo,
-  Kind,
-  RawJournalEntry,
-  Settings,
-} from '../domain/model';
+import type {ApiEntity, Kind, RawJournalEntry, Settings} from '../domain/model';
 import type {ErrorCode} from '../lib/errors';
 
 /** `oauth` sessions come from login; `pat` ones are personal tokens. */
@@ -50,7 +44,6 @@ export interface AccountView {
 
 export interface EntityTotals {
   entities: number;
-  storageBytes: number;
 }
 
 export interface UsageView {
@@ -60,7 +53,7 @@ export interface UsageView {
   used: QuotaCounts;
   limits: QuotaCounts;
   totals: EntityTotals;
-  totalLimits: EntityTotals & {fileBytes: number};
+  totalLimits: EntityTotals;
 }
 
 export interface PendingSessionInput {
@@ -151,17 +144,6 @@ export interface MutationOutcome {
   /** Next occurrences created by completing a recurring task. */
   spawned: ApiEntity[];
   error: MutationError | null;
-}
-
-export interface AttachmentInput {
-  name: string;
-  contentType: string;
-  bytes: ArrayBuffer;
-}
-
-export interface AttachmentResult {
-  attachment: AttachmentInfo;
-  task: ApiEntity;
 }
 
 export interface PushSubscriptionInput {

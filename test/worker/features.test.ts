@@ -1,7 +1,6 @@
 import {runDurableObjectAlarm} from 'cloudflare:test';
 import {beforeAll, describe, expect, it} from 'vitest';
 import {
-  api,
   apiJson,
   hubStub,
   installFetchMock,
@@ -15,11 +14,6 @@ interface Task extends Record<string, unknown> {
   title: string;
   tagIds: string[];
   listId: string | null;
-}
-
-interface Attachment {
-  id: string;
-  size: number;
 }
 
 const UID = 5001;
@@ -119,52 +113,6 @@ describe('views', () => {
       dates: Array<{date: string; tasks: Task[]}>;
     }>('/v1/views/upcoming?days=3', {token});
     expect(upcoming.body.dates[0]!.date).toBe(today);
-  });
-});
-
-describe('attachments', () => {
-  it('uploads, downloads with bearer and signed URL, deletes', async () => {
-    const task = await post<Task>('/v1/tasks', {title: '报账'});
-    const upload = await api(
-      `/v1/tasks/${task.body.id}/attachments?name=${encodeURIComponent('收据.txt')}`,
-      {
-        token,
-        method: 'POST',
-        headers: {'content-type': 'text/plain'},
-        body: 'receipt 123',
-      },
-    );
-    expect(upload.status).toBe(201);
-    const {attachment}: {attachment: Attachment} = await upload.json();
-    expect(attachment.size).toBe(11);
-
-    const download = await api(`/v1/attachments/${attachment.id}`, {token});
-    expect(download.headers.get('content-security-policy')).toContain(
-      'sandbox',
-    );
-    expect(await download.text()).toBe('receipt 123');
-
-    const signed = await apiJson<{url: string}>(
-      `/v1/attachments/${attachment.id}/url`,
-      {token},
-    );
-    const signedPath = new URL(signed.body.url);
-    const viaSig = await api(`${signedPath.pathname}${signedPath.search}`);
-    expect(await viaSig.text()).toBe('receipt 123');
-    const tampered = await api(
-      `${signedPath.pathname}${signedPath.search.replace(/sig=[^&]+/, 'sig=AAAA')}`,
-    );
-    expect(tampered.status).toBe(403);
-    await tampered.text();
-
-    const removed = await apiJson<{task: {attachments: unknown[]}}>(
-      `/v1/tasks/${task.body.id}/attachments/${attachment.id}`,
-      {token, method: 'DELETE'},
-    );
-    expect(removed.body.task.attachments).toEqual([]);
-    const gone = await api(`/v1/attachments/${attachment.id}`, {token});
-    expect(gone.status).toBe(404);
-    await gone.text();
   });
 });
 

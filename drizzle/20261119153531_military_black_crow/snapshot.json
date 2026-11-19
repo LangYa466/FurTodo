@@ -1,7 +1,7 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "id": "2a618d65-4f81-4cdd-8842-9b12d141b45d",
+  "id": "d2beba72-b3e2-44d4-8343-e999ae72846b",
   "prevIds": [
     "00000000-0000-0000-0000-000000000000"
   ],
@@ -127,16 +127,6 @@
     {
       "table": "account",
       "name": "live_entity_count",
-      "type": "integer",
-      "notNull": true,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
-      "entityType": "columns"
-    },
-    {
-      "table": "account",
-      "name": "used_storage_bytes",
       "type": "integer",
       "notNull": true,
       "autoincrement": false,

@@ -284,15 +284,6 @@ export const linkSchema = z
 export const reminderSchema = z
   .object({id: idSchema, at: isoDateTimeSchema})
   .openapi('Reminder');
-export const attachmentSchema = z
-  .object({
-    id: idSchema,
-    name: z.string(),
-    size: z.int(),
-    contentType: z.string(),
-    createdAt: isoDateTimeSchema,
-  })
-  .openapi('Attachment');
 const recurrenceRuleSchema = z
   .object({
     freq: z.enum(['daily', 'weekly', 'monthly', 'yearly']),
@@ -326,9 +317,6 @@ export const taskSchema = z
     energy: z.enum(['low', 'medium', 'high']).nullable(),
     subtasks: z.array(subtaskSchema),
     links: z.array(linkSchema),
-    attachments: z
-      .array(attachmentSchema)
-      .openapi({description: '只读：文件附件，通过 /attachments API 管理'}),
     recurrence: recurrenceRuleSchema.nullable(),
     seriesId: idSchema.nullable().openapi({
       description: '只读：同一重复系列共用的 id',

@@ -38,7 +38,7 @@
 | 清单／文件夹 | `list`、`folder`、`task.listId` | 侧栏：文件夹 → 清单；没有清单 = 收件箱 |
 | 情境标签 | `tag`、`task.tagIds` | `#外出办事`、`#电脑前`、`#低耗脑力`；依标签筛选 |
 | 子任务 | `subtasks[]` | 勾选清单、拖拽排序、进度（3/5） |
-| 备注与附件 | `notes`（Markdown）、`links[]`、`attachments[]` | 备注编辑器、链接（网址/mailto/tel）、文件上传 |
+| 备注与链接 | `notes`（Markdown）、`links[]` | 备注编辑器、链接（网址/mailto/tel） |
 | 周期性重复 | `recurrence` | 每天/每周几/每月几号/每年/完成后 N 天；完成时服务器自动生成下一期 |
 | 快速收集 | `POST /v1/capture` | 全局快捷键／悬浮按钮，一行文字 1–2 秒内存好（§7） |
 | 今日视图 | `myDay`、`/v1/views/today` | “我的一天”：挑今天要做的事；显示最关键 1–3 件（focus） |
@@ -183,7 +183,6 @@ export async function finishLogin(): Promise<string> {
 | `energy` | `low`\|`medium`\|`high`\|null | null | |
 | `subtasks` | `{id, title, completed}[]` ≤ 100 | `[]` | **整个数组一起覆盖**；数组顺序即显示顺序 |
 | `links` | `{id, url, title}[]` ≤ 50 | `[]` | url 限 `http(s)://`、`mailto:`、`tel:` |
-| `attachments` | `{id, name, size, contentType, createdAt}[]` | 只读 | 用 §9 的 API 管理 |
 | `recurrence` | Recurrence \| null | null | §3.5 |
 | `seriesId` | id \| null | 只读 | 重复系列共用 |
 | `myDay` | date \| null | null | 加入“我的一天”的日期 |
@@ -222,7 +221,7 @@ export async function finishLogin(): Promise<string> {
 - 设置 `recurrence` 时服务器会**规范化**：把省略的 `byWeekday`／`byMonthDay`／`byMonth` 按到期日补上并存起来（避免 1/31 → 2/28 → 3/28 的漂移）。没有 `dueDate` 时，服务器把 `dueDate` 设成今天（含）以后第一个符合的日期。
 - **完成重复任务时服务器会生成下一期**（新任务，`seriesId` 相同），返回在 `spawned`（REST `/complete` 或 sync push 结果），之后也会出现在 pull。
   - **客户端不要自己创建下一期**。下一期的 id 由“系列＋日期”决定，多台设备同时完成也不会重复。
-  - 复制：title、notes、listId、tagIds、priority、quadrant、dueTime、estimateMinutes、energy、links、子任务（全部改回未完成）、提醒（向后平移同样的天数）。不复制：附件、myDay、completedAt。
+  - 复制：title、notes、listId、tagIds、priority、quadrant、dueTime、estimateMinutes、energy、links、子任务（全部改回未完成）、提醒（向后平移同样的天数）。不复制：myDay、completedAt。
   - `basis: "due"` 逾期才完成：下一期会追到“今天（含）以后”，不会补一堆过去的。
   - `count` 用完或超过 `until` 就不再生成。
 
@@ -264,11 +263,6 @@ export async function finishLogin(): Promise<string> {
 | POST | `/v1/capture` | 快速收集（§7） |
 | POST | `/v1/sync/push` | 批量提交变更（§5） |
 | GET | `/v1/sync/pull?cursor=&limit=` | 拉增量（§5） |
-| POST | `/v1/tasks/{id}/attachments` | 上传附件（§9） |
-| DELETE | `/v1/tasks/{id}/attachments/{attachmentId}` | 删除附件 |
-| GET | `/v1/attachments/{attachmentId}` | 下载（Bearer） |
-| GET | `/v1/attachments/{attachmentId}/url` | 1 小时有效的签名网址 |
-| GET | `/v1/files/{userId}/{attachmentId}?exp&sig` | 公开（依赖签名）。下载 |
 | GET | `/v1/push/vapid-public-key` | 公开。Web Push 公钥 |
 | POST / DELETE | `/v1/push/subscriptions` | 登记／取消推送订阅（DELETE 用 `?endpoint=`） |
 | POST | `/v1/push/test` | 发送测试推送 |
@@ -531,21 +525,7 @@ self.addEventListener("notificationclick", (event) => {
 
 ---
 
-## 9. 附件
-
-- 上传：`POST /v1/tasks/{id}/attachments`
-  - multipart：`FormData` 字段 `file`；或
-  - raw body：`Content-Type: image/png` + `?name=收据.png`
-  - 返回 `201 { attachment, task }`；任务的 `attachments` 会更新（也会出现在 pull）。
-- 下载：`GET /v1/attachments/{attachmentId}`（Bearer）。要给 `<img src>` 用时改拿签名网址：`GET /v1/attachments/{attachmentId}/url` → `{ url, expiresAt }`（1 小时）。`?download=1` 强制下载。
-- 删除：`DELETE /v1/tasks/{id}/attachments/{attachmentId}`。
-- 上限：单个文件 5 MiB、每个任务 20 个、每人总量 100 MiB、每日上传 50 MiB（实际值看 `/v1/usage`）。
-- 任务删除后附件保留 30 天（可随任务恢复），之后永久删除。
-- 附件需要网络；离线时 UI 显示“待上传”，联网后再上传。
-
----
-
-## 10. 配额与上限
+## 9. 配额与上限
 
 每位用户**每日**配额（`QUOTA_TIMEZONE` = `Asia/Shanghai`，即上海时间 00:00 重置），超过时返回 `429 quota_exceeded`，`Retry-After` header 为距离重置的秒数：
 
@@ -555,11 +535,10 @@ self.addEventListener("notificationclick", (event) => {
 | KV reads | 60,000 | 读数据（每条 1） |
 | KV writes | 3,000 | 每条实际变更 1（值没变不算） |
 | KV lists | 3,000 | 全量扫描每 1000 条 1 |
-| uploadBytes | 50 MiB | 上传附件 |
 | logins | 30 | 登录次数 |
 | pushes | 500 | 推送发送数 |
 
-总量上限：未删除的实体 20,000 条（任务＋清单＋文件夹＋标签，超过 `403 limit_exceeded`）、附件总量 100 MiB、单个文件 5 MiB。
+总量上限：未删除的实体 20,000 条（任务＋清单＋文件夹＋标签，超过 `403 limit_exceeded`）。
 
 `GET /v1/usage` 可以查询今天用了多少。节省配额的做法：
 
@@ -571,7 +550,7 @@ self.addEventListener("notificationclick", (event) => {
 
 ---
 
-## 11. 错误
+## 10. 错误
 
 ```json
 { "error": { "code": "validation_error", "message": "请求格式错误", "details": { "issues": [ { "path": "title", "message": "Too small: expected string to have >=1 characters", "code": "too_small" } ] } } }
@@ -582,19 +561,17 @@ self.addEventListener("notificationclick", (event) => {
 | 400 | `validation_error`、`bad_request` | 修正请求；`details.issues` 指出字段 |
 | 401 | `invalid_token`、`session_expired` | 重新登录 |
 | 403 | `not_org_member`、`org_access_restricted` | 提示用户；已被退出登录 |
-| 403 | `limit_exceeded` | 数据条数／附件容量已满 |
-| 403 | `forbidden` | 签名网址过期 → 重新获取 |
+| 403 | `limit_exceeded` | 数据条数已满 |
 | 404 | `not_found` | |
 | 409 | `deleted` | 实体在回收站，先恢复 |
-| 409 | `limit_exceeded` | 附件数或推送订阅数已满 |
-| 413 | `payload_too_large` | 文件太大 |
+| 409 | `limit_exceeded` | 推送订阅数已满 |
 | 429 | `quota_exceeded`、`rate_limited` | 等 `Retry-After` 秒 |
 | 503 | `github_unavailable`、`storage_busy` | 稍后重试 |
 | 500 | `internal_error` | 附上 `details.requestId` 上报 |
 
 ---
 
-## 12. 给 AI agent 的实现建议
+## 11. 给 AI agent 的实现建议
 
 ### Web（CSR / SPA，不要 SSR）
 
@@ -625,7 +602,7 @@ self.addEventListener("notificationclick", (event) => {
 
 ---
 
-## 13. 用 curl 测试
+## 12. 用 curl 测试
 
 先到 `/dev/login` 登录，复制 token（或创建个人 token）：
 

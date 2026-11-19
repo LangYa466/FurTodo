@@ -1,13 +1,7 @@
 import {isValidTimeZone} from './lib/time';
 
 export type QuotaKind =
-  | 'requests'
-  | 'reads'
-  | 'writes'
-  | 'lists'
-  | 'uploadBytes'
-  | 'logins'
-  | 'pushes';
+  'requests' | 'reads' | 'writes' | 'lists' | 'logins' | 'pushes';
 export type QuotaCounts = Record<QuotaKind, number>;
 
 export interface AppConfig {
@@ -20,8 +14,6 @@ export interface AppConfig {
   quotaTimeZone: string;
   dailyQuota: QuotaCounts;
   maxEntities: number;
-  maxStorageBytes: number;
-  maxFileBytes: number;
 }
 
 const MIN_TOKEN_SECRET_LENGTH = 32;
@@ -76,10 +68,6 @@ export function readConfig(env: Env): AppConfig {
         'QUOTA_KV_LISTS_PER_DAY',
         env.QUOTA_KV_LISTS_PER_DAY,
       ),
-      uploadBytes: parsePositiveInt(
-        'QUOTA_UPLOAD_BYTES_PER_DAY',
-        env.QUOTA_UPLOAD_BYTES_PER_DAY,
-      ),
       logins: parsePositiveInt(
         'QUOTA_LOGINS_PER_DAY',
         env.QUOTA_LOGINS_PER_DAY,
@@ -87,13 +75,5 @@ export function readConfig(env: Env): AppConfig {
       pushes: parsePositiveInt('QUOTA_PUSH_PER_DAY', env.QUOTA_PUSH_PER_DAY),
     },
     maxEntities: parsePositiveInt('LIMIT_MAX_ENTITIES', env.LIMIT_MAX_ENTITIES),
-    maxStorageBytes: parsePositiveInt(
-      'LIMIT_STORAGE_BYTES',
-      env.LIMIT_STORAGE_BYTES,
-    ),
-    maxFileBytes: parsePositiveInt(
-      'LIMIT_MAX_FILE_BYTES',
-      env.LIMIT_MAX_FILE_BYTES,
-    ),
   };
 }

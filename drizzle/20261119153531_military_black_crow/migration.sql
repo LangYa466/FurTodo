@@ -9,7 +9,6 @@ CREATE TABLE `account` (
 	`settings` text NOT NULL,
 	`committed_stamp` integer NOT NULL,
 	`live_entity_count` integer NOT NULL,
-	`used_storage_bytes` integer NOT NULL,
 	`pruned_at` integer NOT NULL
 );
 --> statement-breakpoint

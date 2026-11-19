@@ -1,8 +1,8 @@
-import m0000 from './20261119145056_sweet_jigsaw/migration.sql';
+import m0000 from './20261119153531_military_black_crow/migration.sql';
 
   export default {
     migrations: {
-      "20261119145056_sweet_jigsaw": m0000
+      "20261119153531_military_black_crow": m0000
 }
   }
   

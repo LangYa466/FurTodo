@@ -21,9 +21,7 @@ import {
 import {
   REQUIRED_ON_CREATE,
   SETTINGS_ID,
-  TOMBSTONE_RETENTION_MS,
   TOMBSTONE_TTL_SECONDS,
-  blobKey,
   entityKey,
   mergePatch,
   metadataFor,
@@ -33,8 +31,6 @@ import {
   taskDataOf,
   toApiEntity,
   type ApiEntity,
-  type AttachmentInfo,
-  type BlobMetadata,
   type JournalEntry,
   type RawJournalEntry,
   type Settings,
@@ -89,8 +85,6 @@ import {
 } from './schema';
 import type {
   AccountView,
-  AttachmentInput,
-  AttachmentResult,
   BeginReadOptions,
   BeginReadResult,
   JournalRequest,
@@ -130,7 +124,6 @@ const PRUNE_INTERVAL_MS = HOUR_MS;
 const USAGE_HISTORY_DAYS = 14;
 const MAX_SESSIONS = 50;
 const MAX_PUSH_SUBSCRIPTIONS = 10;
-const MAX_ATTACHMENTS_PER_TASK = 20;
 const ENTITY_CACHE_MAX = 2000;
 const CASCADE_BATCH_SIZE = 200;
 const JOBS_PER_ALARM = 5;
@@ -162,7 +155,6 @@ interface AccountState {
   /** Highest stamp persisted to KV and the journal; readers stop here. */
   committedStamp: number;
   liveEntityCount: number;
-  usedStorageBytes: number;
   prunedAt: number;
 }
 
@@ -179,7 +171,7 @@ interface MutationEffect {
   spawned: StoredEntity[];
 }
 
-type JobType = 'cascade_list' | 'purge_blobs';
+type JobType = 'cascade_list';
 /** `more` reruns the job right away; `retryAt` reschedules it. */
 type JobOutcome = 'done' | 'more' | {retryAt: number};
 
@@ -188,17 +180,11 @@ interface CascadeListJob {
   op: 'delete' | 'restore';
 }
 
-interface PurgeBlobsJob {
-  taskId: string;
-  blobs: Array<{id: number | string; size: number}>;
-}
-
 const ZERO_COUNTS: QuotaCounts = {
   requests: 0,
   reads: 0,
   writes: 0,
   lists: 0,
-  uploadBytes: 0,
   logins: 0,
   pushes: 0,
 };
@@ -316,7 +302,6 @@ export class UserHub extends DurableObject<Env> {
         settings: this.accountState?.settings ?? settingsFrom(null),
         committedStamp: this.accountState?.committedStamp ?? 0,
         liveEntityCount: this.accountState?.liveEntityCount ?? 0,
-        usedStorageBytes: this.accountState?.usedStorageBytes ?? 0,
         prunedAt: now,
       };
       this.saveAccount();
@@ -459,15 +444,8 @@ export class UserHub extends DurableObject<Env> {
         ).toISOString(),
         used: {...usage.counts},
         limits: {...dailyQuota},
-        totals: {
-          entities: account.liveEntityCount,
-          storageBytes: account.usedStorageBytes,
-        },
-        totalLimits: {
-          entities: maxEntities,
-          storageBytes: this.config.maxStorageBytes,
-          fileBytes: this.config.maxFileBytes,
-        },
+        totals: {entities: account.liveEntityCount},
+        totalLimits: {entities: maxEntities},
       };
     });
   }
@@ -532,17 +510,6 @@ export class UserHub extends DurableObject<Env> {
     this.persistUsage();
   }
 
-  /** Charges a signed attachment download, which carries no session. */
-  async chargeSignedFileRead(): Promise<HubResult<null>> {
-    return this.asResult(async () => {
-      const now = Date.now();
-      if (!this.accountState) fail(404, 'not_found', '找不到附件');
-      this.consumeQuota('requests', 1, now);
-      this.consumeQuota('reads', 1, now);
-      return null;
-    });
-  }
-
   async applyMutations(
     sessionId: string,
     mutations: ValidatedMutation[],
@@ -553,105 +520,6 @@ export class UserHub extends DurableObject<Env> {
         const outcomes = await this.applyMutationBatch(mutations);
         await this.rescheduleAlarm();
         return outcomes;
-      });
-    });
-  }
-
-  async addAttachment(
-    sessionId: string,
-    taskId: string,
-    file: AttachmentInput,
-  ): Promise<HubResult<AttachmentResult>> {
-    return this.asResult(async () => {
-      const now = Date.now();
-      await this.authorize(sessionId, now);
-      return this.serialized(async () => {
-        const size = file.bytes.byteLength;
-        const {maxFileBytes, maxStorageBytes} = this.config;
-        const account = this.requireAccount();
-        if (size === 0) fail(400, 'bad_request', '文件是空的');
-        if (size > maxFileBytes) {
-          fail(413, 'payload_too_large', `单文件上限 ${maxFileBytes} bytes`, {
-            limit: maxFileBytes,
-          });
-        }
-        if (account.usedStorageBytes + size > maxStorageBytes) {
-          fail(403, 'limit_exceeded', '附件总容量已满', {
-            limit: maxStorageBytes,
-            used: account.usedStorageBytes,
-          });
-        }
-        const task = await this.loadEntity(
-          entityKey(account.userId, 'task', taskId),
-        );
-        if (!task || task.deletedAt) fail(404, 'not_found', '任务不存在');
-        const attachments = taskDataOf(task).attachments;
-        if (attachments.length >= MAX_ATTACHMENTS_PER_TASK) {
-          fail(
-            409,
-            'limit_exceeded',
-            `每个任务最多 ${MAX_ATTACHMENTS_PER_TASK} 个附件`,
-          );
-        }
-        this.consumeQuota('uploadBytes', size, now);
-        this.consumeQuota('writes', 1, now);
-        const attachment: AttachmentInfo = {
-          id: uuidV7(now),
-          name: file.name,
-          size,
-          contentType: file.contentType,
-          createdAt: new Date(now).toISOString(),
-        };
-        const metadata: BlobMetadata = {
-          taskId,
-          name: encodeURIComponent(file.name),
-          contentType: file.contentType,
-          size,
-        };
-        await this.putWithRetry(
-          blobKey(account.userId, attachment.id),
-          file.bytes,
-          {metadata},
-        );
-        this.setUsedStorageBytes(account.usedStorageBytes + size);
-        const updated = this.withNewRevision({
-          ...task,
-          data: {...task.data, attachments: [...attachments, attachment]},
-          clock: {...task.clock, attachments: now},
-        });
-        await this.persistEntity(updated);
-        return {attachment, task: this.toApi(updated)};
-      });
-    });
-  }
-
-  async removeAttachment(
-    sessionId: string,
-    taskId: string,
-    attachmentId: string,
-  ): Promise<HubResult<{task: ApiEntity}>> {
-    return this.asResult(async () => {
-      const now = Date.now();
-      await this.authorize(sessionId, now);
-      return this.serialized(async () => {
-        const task = await this.loadEntity(
-          entityKey(this.requireAccount().userId, 'task', taskId),
-        );
-        if (!task) fail(404, 'not_found', '任务不存在');
-        const attachments = taskDataOf(task).attachments;
-        const target = attachments.find(({id}) => id === attachmentId);
-        if (!target) fail(404, 'not_found', '附件不存在');
-        const updated = this.withNewRevision({
-          ...task,
-          data: {
-            ...task.data,
-            attachments: attachments.filter(({id}) => id !== attachmentId),
-          },
-          clock: {...task.clock, attachments: now},
-        });
-        await this.persistEntity(updated);
-        await this.deleteBlob(target.id, target.size);
-        return {task: this.toApi(updated)};
       });
     });
   }
@@ -797,7 +665,6 @@ export class UserHub extends DurableObject<Env> {
       settings: row.settings,
       committedStamp: row.committedStamp,
       liveEntityCount: row.liveEntityCount,
-      usedStorageBytes: row.usedStorageBytes,
       prunedAt: row.prunedAt,
     };
   }
@@ -1054,11 +921,6 @@ export class UserHub extends DurableObject<Env> {
     this.db.delete(sessions).where(inArray(sessions.id, oldest)).run();
   }
 
-  private setUsedStorageBytes(bytes: number): void {
-    this.requireAccount().usedStorageBytes = Math.max(0, bytes);
-    this.saveAccount();
-  }
-
   private setLiveEntityCount(count: number): void {
     this.requireAccount().liveEntityCount = Math.max(0, count);
     this.saveAccount();
@@ -1277,15 +1139,6 @@ export class UserHub extends DurableObject<Env> {
       this.saveAccount();
     }
     if (entity.kind === 'task') this.scheduleTaskReminders(entity, now);
-  }
-
-  private async deleteBlob(attachmentId: string, size: number): Promise<void> {
-    this.consumeQuota('writes', 1, Date.now());
-    await this.env.DATA.delete(
-      blobKey(this.requireAccount().userId, attachmentId),
-    );
-    const state = this.requireAccount();
-    this.setUsedStorageBytes(state.usedStorageBytes - size);
   }
 
   /** Applies mutations in order; one rejection does not stop the rest. */
@@ -1619,31 +1472,12 @@ export class UserHub extends DurableObject<Env> {
       const job: CascadeListJob = {listId: entity.id, op: 'delete'};
       this.enqueueJob('cascade_list', entity.id, job, now);
     }
-    if (entity.kind === 'task') {
-      const blobs = taskDataOf(entity).attachments.map(({id, size}) => ({
-        id,
-        size,
-      }));
-      if (blobs.length > 0) {
-        const job: PurgeBlobsJob = {taskId: entity.id, blobs};
-        // Blobs outlive the task for the trash period so restores keep them.
-        this.enqueueJob(
-          'purge_blobs',
-          entity.id,
-          job,
-          now + TOMBSTONE_RETENTION_MS,
-        );
-      }
-    }
   }
 
   private onRestored(entity: StoredEntity): void {
     if (entity.kind === 'list') {
       const job: CascadeListJob = {listId: entity.id, op: 'restore'};
       this.enqueueJob('cascade_list', entity.id, job, Date.now());
-    }
-    if (entity.kind === 'task') {
-      this.cancelJob('purge_blobs', entity.id);
     }
   }
 
@@ -1680,7 +1514,7 @@ export class UserHub extends DurableObject<Env> {
   private enqueueJob(
     type: JobType,
     ref: string,
-    payload: CascadeListJob | PurgeBlobsJob,
+    payload: CascadeListJob,
     runAt: number,
   ): void {
     this.db.insert(jobs).values({type, ref, payload, runAt}).run();
@@ -1866,17 +1700,6 @@ export class UserHub extends DurableObject<Env> {
       case 'cascade_list': {
         const {listId, op} = job.payload as CascadeListJob;
         return this.cascadeListChange(listId, op);
-      }
-      case 'purge_blobs': {
-        const {taskId, blobs} = job.payload as PurgeBlobsJob;
-        const task = await this.loadEntity(
-          entityKey(this.requireAccount().userId, 'task', taskId),
-        );
-        if (task && !task.deletedAt) return 'done';
-        for (const blob of blobs) {
-          await this.deleteBlob(String(blob.id), blob.size);
-        }
-        return 'done';
       }
       default:
         return 'done';

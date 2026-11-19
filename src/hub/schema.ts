@@ -35,7 +35,6 @@ export const account = sqliteTable('account', {
   /** Highest entity stamp persisted to KV and the journal. */
   committedStamp: integer('committed_stamp').notNull(),
   liveEntityCount: integer('live_entity_count').notNull(),
-  usedStorageBytes: integer('used_storage_bytes').notNull(),
   prunedAt: integer('pruned_at').notNull(),
 });
 

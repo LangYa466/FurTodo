@@ -12,7 +12,6 @@ const quotaCountsSchema = z.object({
   reads: z.int().openapi({description: 'KV 读取（每个 key 算 1 次）'}),
   writes: z.int().openapi({description: 'KV 写入/删除'}),
   lists: z.int().openapi({description: 'KV 列举（每页 1000 个 key 算 1 次）'}),
-  uploadBytes: z.int(),
   logins: z.int(),
   pushes: z.int().openapi({description: 'Web Push 发送数'}),
 });
@@ -24,12 +23,8 @@ const usageSchema = z
     resetAt: z.string().openapi({description: '下次每日配额重置时间'}),
     used: quotaCountsSchema,
     limits: quotaCountsSchema,
-    totals: z.object({entities: z.int(), storageBytes: z.int()}),
-    totalLimits: z.object({
-      entities: z.int(),
-      storageBytes: z.int(),
-      fileBytes: z.int(),
-    }),
+    totals: z.object({entities: z.int()}),
+    totalLimits: z.object({entities: z.int()}),
   })
   .openapi('Usage');
 

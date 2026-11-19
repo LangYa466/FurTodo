@@ -5,7 +5,6 @@ import {HTTPException} from 'hono/http-exception';
 import {configFor, requireAuth, type AppEnv} from './http/context';
 import {randomBase64Url} from './lib/crypto';
 import {AppError} from './lib/errors';
-import {registerAttachmentRoutes} from './routes/attachments';
 import {registerAuthRoutes} from './routes/auth';
 import {registerCaptureRoutes} from './routes/capture';
 import {registerEntityRoutes} from './routes/entities';
@@ -19,7 +18,7 @@ export {UserHub} from './hub/user-hub';
 
 const REQUEST_ID_BYTES = 8;
 
-/** `/v1` paths that skip Bearer auth; `/v1/files/*` is checked by signature. */
+/** `/v1` paths that skip Bearer auth. */
 const PUBLIC_V1_PATHS: Record<string, true> = {
   '/v1/auth/github/authorize': true,
   '/v1/auth/github/callback': true,
@@ -84,9 +83,7 @@ app.use(
 );
 
 app.use('/v1/*', async (c, next) => {
-  if (PUBLIC_V1_PATHS[c.req.path] || c.req.path.startsWith('/v1/files/')) {
-    return next();
-  }
+  if (PUBLIC_V1_PATHS[c.req.path]) return next();
   return requireAuth(c, next);
 });
 
@@ -97,7 +94,6 @@ registerEntityRoutes(app);
 registerSyncRoutes(app);
 registerViewRoutes(app);
 registerCaptureRoutes(app);
-registerAttachmentRoutes(app);
 registerPushRoutes(app);
 
 app.openAPIRegistry.registerComponent('securitySchemes', 'bearerAuth', {
@@ -129,7 +125,6 @@ app.doc31('/openapi.json', c => ({
     {name: 'Views', description: '今日 / 即将到来 / 四象限'},
     {name: 'Capture', description: '一行文字快速创建任务'},
     {name: 'Sync', description: '离线同步：push 变更、pull 增量'},
-    {name: 'Attachments', description: '文件附件'},
     {name: 'Push', description: 'Web Push 提醒'},
   ],
 }));

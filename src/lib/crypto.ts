@@ -9,7 +9,7 @@ import {
 // Every key is derived from TOKEN_SECRET with HKDF; the purpose string is the
 // HKDF info, so keys for different purposes are independent. The strings are
 // part of the key derivation: changing one invalidates what it protects.
-type KeyPurpose = 'token-hmac' | 'state-aes' | 'ghtoken-aes' | 'file-hmac';
+type KeyPurpose = 'token-hmac' | 'state-aes' | 'ghtoken-aes';
 export type SealPurpose = Extract<KeyPurpose, `${string}-aes`>;
 
 const HKDF_SALT = utf8Encoder.encode('furtodo/v1');
@@ -165,35 +165,6 @@ export async function verifyToken(
     signature,
   );
   return valid ? {userId, sessionId} : null;
-}
-
-/** Signs a time-limited attachment download URL. */
-export function signFileUrl(
-  secret: string,
-  userId: string,
-  attachmentId: string,
-  expiresAtSeconds: number,
-): Promise<string> {
-  return hmacSign(
-    secret,
-    'file-hmac',
-    `${userId}|${attachmentId}|${expiresAtSeconds}`,
-  );
-}
-
-export function verifyFileUrl(
-  secret: string,
-  userId: string,
-  attachmentId: string,
-  expiresAtSeconds: number,
-  signature: string,
-): Promise<boolean> {
-  return hmacVerify(
-    secret,
-    'file-hmac',
-    `${userId}|${attachmentId}|${expiresAtSeconds}`,
-    signature,
-  );
 }
 
 /** Encrypts `value` as JSON with AES-GCM; the output is base64url(iv || ciphertext). */

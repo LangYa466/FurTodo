@@ -68,22 +68,6 @@ export interface LinkData {
   title: string | null;
 }
 
-export interface AttachmentInfo {
-  id: string;
-  name: string;
-  size: number;
-  contentType: string;
-  createdAt: string;
-}
-
-/** KV metadata of an attachment blob; `name` is URI-encoded to stay ASCII. */
-export interface BlobMetadata {
-  taskId: string;
-  name: string;
-  contentType: string;
-  size: number;
-}
-
 /** Stored task fields: zod validates client input and the server sets the rest. */
 export interface TaskData {
   title: string;
@@ -99,7 +83,6 @@ export interface TaskData {
   energy: 'low' | 'medium' | 'high' | null;
   subtasks: SubtaskData[];
   links: LinkData[];
-  attachments: AttachmentInfo[];
   recurrence: Recurrence | null;
   seriesId: string | null;
   myDay: string | null;
@@ -147,7 +130,6 @@ const DEFAULT_FIELDS: Record<
     energy: null,
     subtasks: [],
     links: [],
-    attachments: [],
     recurrence: null,
     seriesId: null,
     myDay: null,
@@ -184,10 +166,6 @@ export function entityKeyPrefix(userId: string, kind?: Kind): string {
 
 export function entityKey(userId: string, kind: Kind, id: string): string {
   return `e:${userId}:${kind}:${id}`;
-}
-
-export function blobKey(userId: string, attachmentId: string): string {
-  return `b:${userId}:${attachmentId}`;
 }
 
 export function parseEntityKey(key: string): {kind: Kind; id: string} | null {
