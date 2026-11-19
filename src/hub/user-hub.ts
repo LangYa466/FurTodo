@@ -1,9 +1,15 @@
 import {DurableObject} from 'cloudflare:workers';
+import {and, count, eq, gt, inArray, lt, lte, min, sql} from 'drizzle-orm';
+import {
+  drizzle,
+  type DrizzleSqliteDODatabase,
+} from 'drizzle-orm/durable-sqlite';
+import {migrate} from 'drizzle-orm/durable-sqlite/migrator';
+import type {SQLiteTable} from 'drizzle-orm/sqlite-core';
+import migrations from '../../drizzle/migrations';
 import {
   checkMembership,
   type GithubProfile,
-  type MembershipSource,
-  type OrgRole,
   type OrgSummary,
 } from '../auth/github';
 import {
@@ -29,7 +35,6 @@ import {
   type ApiEntity,
   type AttachmentInfo,
   type BlobMetadata,
-  type EntityMetadata,
   type JournalEntry,
   type RawJournalEntry,
   type Settings,
@@ -68,6 +73,20 @@ import {
   scanMetadata,
   type QuotaCharger,
 } from '../store/scan';
+import {
+  account,
+  journalEntries,
+  jobs,
+  pushSubscriptions,
+  reminders,
+  sessions,
+  usageDays,
+  type JobRow,
+  type PushSubscriptionRow,
+  type ReminderPayload,
+  type SessionRow,
+  type StoredMembership,
+} from './schema';
 import type {
   AccountView,
   AttachmentInput,
@@ -81,7 +100,6 @@ import type {
   PushDelivery,
   PushSubscriptionInput,
   ReadQuotaGrant,
-  SessionKind,
   SessionView,
   TestPushResult,
   TopUpResult,
@@ -93,6 +111,8 @@ const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 
+/** Row key of the single account row. */
+const ACCOUNT_ID = 'main';
 /** How long writes stay in the journal; KV converges within about 60s. */
 const JOURNAL_WINDOW_MS = 10 * MINUTE_MS;
 /** Journal age overlaid on KV scans. */
@@ -129,94 +149,21 @@ const SESSION_ID_BYTES = 16;
 /** Durable Object SQLite binds at most 100 parameters per query. */
 const SQL_MAX_PARAMS = 100;
 
-// JSON columns and state values are written only by this class, so reads cast
-// them back to their known types.
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS sessions (
-  id TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT, status TEXT NOT NULL,
-  code_challenge TEXT, redirect_uri TEXT, user_agent TEXT,
-  created_at INTEGER NOT NULL, last_used_at INTEGER NOT NULL,
-  expires_at INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS usage (day TEXT PRIMARY KEY, counts TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS journal (
-  key TEXT PRIMARY KEY, updated_at INTEGER NOT NULL, metadata TEXT NOT NULL,
-  body TEXT NOT NULL, written_at INTEGER NOT NULL);
-CREATE INDEX IF NOT EXISTS journal_updated_at ON journal(updated_at);
-CREATE INDEX IF NOT EXISTS journal_written_at ON journal(written_at);
-CREATE TABLE IF NOT EXISTS reminders (
-  task_id TEXT NOT NULL, reminder_id TEXT NOT NULL, fire_at INTEGER NOT NULL,
-  payload TEXT NOT NULL, PRIMARY KEY (task_id, reminder_id));
-CREATE INDEX IF NOT EXISTS reminders_fire_at ON reminders(fire_at);
-CREATE TABLE IF NOT EXISTS push_subscriptions (
-  endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL,
-  device TEXT, created_at INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS jobs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, ref TEXT NOT NULL,
-  payload TEXT NOT NULL, run_at INTEGER NOT NULL);
-CREATE INDEX IF NOT EXISTS jobs_run_at ON jobs(run_at);
-`;
+type Database = DrizzleSqliteDODatabase;
 
-// Row types are aliases rather than interfaces: sql.exec<T> requires index
-// signatures, which interfaces lack.
-type SessionRow = {
-  id: string;
-  kind: SessionKind;
-  name: string | null;
-  status: 'pending' | 'active';
-  code_challenge: string | null;
-  redirect_uri: string | null;
-  user_agent: string | null;
-  created_at: number;
-  last_used_at: number;
-  expires_at: number;
-};
-type JournalRow = {key: string; metadata: string; body: string};
-type ReminderRow = {
-  task_id: string;
-  reminder_id: string;
-  fire_at: number;
-  payload: string;
-};
-type PushSubscriptionRow = {
-  endpoint: string;
-  p256dh: string;
-  auth: string;
-  device: string | null;
-  created_at: number;
-};
-type JobRow = {
-  id: number;
-  type: string;
-  ref: string;
-  payload: string;
-  run_at: number;
-};
-
-type StringStateKey =
-  | 'user_id'
-  | 'github_token'
-  | 'membership_verified_at'
-  | 'committed_stamp'
-  | 'live_entity_count'
-  | 'used_storage_bytes'
-  | 'pruned_at';
-
-interface StoredMembership {
-  role: OrgRole;
-  via: MembershipSource;
-}
-
-interface JsonState {
+interface AccountState {
+  userId: string;
   profile: GithubProfile;
   orgs: OrgSummary[];
   membership: StoredMembership;
+  membershipVerifiedAt: number;
+  sealedGithubToken: string;
   settings: Settings;
-}
-
-interface UsageDay {
-  day: string;
-  counts: QuotaCounts;
+  /** Highest stamp persisted to KV and the journal; readers stop here. */
+  committedStamp: number;
+  liveEntityCount: number;
+  usedStorageBytes: number;
+  prunedAt: number;
 }
 
 type MembershipCheck = 'ok' | 'revoked' | 'restricted' | 'unavailable';
@@ -232,12 +179,6 @@ interface MutationEffect {
   spawned: StoredEntity[];
 }
 
-interface ReminderPayload {
-  title: string;
-  dueDate: string | null;
-  dueTime: string | null;
-}
-
 type JobType = 'cascade_list' | 'purge_blobs';
 /** `more` reruns the job right away; `retryAt` reschedules it. */
 type JobOutcome = 'done' | 'more' | {retryAt: number};
@@ -249,7 +190,7 @@ interface CascadeListJob {
 
 interface PurgeBlobsJob {
   taskId: string;
-  blobs: Array<{id: string; size: number}>;
+  blobs: Array<{id: number | string; size: number}>;
 }
 
 const ZERO_COUNTS: QuotaCounts = {
@@ -284,10 +225,10 @@ function toSessionView(row: SessionRow, currentSessionId: string): SessionView {
     id: row.id,
     kind: row.kind,
     name: row.name,
-    userAgent: row.user_agent,
-    createdAt: new Date(row.created_at).toISOString(),
-    lastUsedAt: new Date(row.last_used_at).toISOString(),
-    expiresAt: new Date(row.expires_at).toISOString(),
+    userAgent: row.userAgent,
+    createdAt: new Date(row.createdAt).toISOString(),
+    lastUsedAt: new Date(row.lastUsedAt).toISOString(),
+    expiresAt: new Date(row.expiresAt).toISOString(),
     current: row.id === currentSessionId,
   };
 }
@@ -312,19 +253,17 @@ function unsavedSettingsEntity(settings: Settings): ApiEntity {
  *   Web Push subscriptions, reminder alarms, and background jobs.
  * - Serializes every entity write to KV and keeps a short journal that readers
  *   overlay on KV to hide its eventual consistency.
+ *
+ * Storage is SQLite through Drizzle; the schema lives in `schema.ts` and
+ * drizzle-kit generates the migrations applied in the constructor.
  */
 export class UserHub extends DurableObject<Env> {
-  private readonly sql: SqlStorage;
+  private readonly db: Database;
   private readonly config: AppConfig;
-  private storedUserId: string | null;
+  private accountState: AccountState | null;
   /** Highest stamp handed out; its write may still be in flight. */
   private issuedStamp: number;
-  /** Highest stamp persisted to KV and the journal; readers stop here. */
-  private committedStamp: number;
-  private liveEntityCount: number;
-  private usedStorageBytes: number;
-  private settings: Settings;
-  private usageCache: UsageDay | null = null;
+  private usageCache: {day: string; counts: QuotaCounts} | null = null;
   private readonly entityCache = new Map<string, StoredEntity>();
   /** Tail of the write queue; see `serialized`. */
   private writeQueue: Promise<unknown> = Promise.resolve();
@@ -338,15 +277,16 @@ export class UserHub extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.sql = ctx.storage.sql;
     this.config = readConfig(env);
-    this.sql.exec(SCHEMA);
-    this.storedUserId = this.getState('user_id');
-    this.committedStamp = Number(this.getState('committed_stamp') ?? 0);
-    this.issuedStamp = this.committedStamp;
-    this.liveEntityCount = Number(this.getState('live_entity_count') ?? 0);
-    this.usedStorageBytes = Number(this.getState('used_storage_bytes') ?? 0);
-    this.settings = this.getJsonState('settings') ?? settingsFrom(null);
+    this.db = drizzle(ctx.storage);
+    // Durable Object SQLite migrations are synchronous, so they finish here
+    // and every RPC method sees the current schema.
+    const migrationFailure = migrate(this.db, migrations);
+    if (migrationFailure) {
+      throw new Error(`UserHub migration failed: ${migrationFailure.exitCode}`);
+    }
+    this.accountState = this.loadAccount();
+    this.issuedStamp = this.accountState?.committedStamp ?? 0;
   }
 
   /**
@@ -358,33 +298,46 @@ export class UserHub extends DurableObject<Env> {
   ): Promise<HubResult<{sessionId: string}>> {
     return this.asResult(async () => {
       const now = Date.now();
-      if (this.storedUserId && this.storedUserId !== input.userId) {
-        fail(500, 'internal_error', 'Durable Object 與使用者不符');
+      if (this.accountState && this.accountState.userId !== input.userId) {
+        fail(500, 'internal_error', 'Durable Object 与用户不符');
       }
       this.consumeQuota('logins', 1, now);
-      this.storedUserId = input.userId;
-      this.setState('user_id', input.userId);
-      this.setJsonState('profile', input.profile);
-      this.setJsonState('orgs', input.orgs);
-      this.setJsonState('membership', input.membership);
-      this.setState('membership_verified_at', String(now));
-      this.setState(
-        'github_token',
-        await sealJson(this.env.TOKEN_SECRET, 'ghtoken-aes', input.githubToken),
-      );
+      this.accountState = {
+        userId: input.userId,
+        profile: input.profile,
+        orgs: input.orgs,
+        membership: input.membership,
+        membershipVerifiedAt: now,
+        sealedGithubToken: await sealJson(
+          this.env.TOKEN_SECRET,
+          'ghtoken-aes',
+          input.githubToken,
+        ),
+        settings: this.accountState?.settings ?? settingsFrom(null),
+        committedStamp: this.accountState?.committedStamp ?? 0,
+        liveEntityCount: this.accountState?.liveEntityCount ?? 0,
+        usedStorageBytes: this.accountState?.usedStorageBytes ?? 0,
+        prunedAt: now,
+      };
+      this.saveAccount();
       this.pruneExpiredState(now, /* force= */ true);
       this.evictOldestSessions();
       const sessionId = randomBase64Url(SESSION_ID_BYTES);
-      this.sql.exec(
-        "INSERT INTO sessions (id, kind, name, status, code_challenge, redirect_uri, user_agent, created_at, last_used_at, expires_at) VALUES (?, 'oauth', NULL, 'pending', ?, ?, ?, ?, ?, ?)",
-        sessionId,
-        input.codeChallenge,
-        input.redirectUri,
-        input.userAgent,
-        now,
-        now,
-        now + LOGIN_CODE_TTL_MS,
-      );
+      this.db
+        .insert(sessions)
+        .values({
+          id: sessionId,
+          kind: 'oauth',
+          name: null,
+          status: 'pending',
+          codeChallenge: input.codeChallenge,
+          redirectUri: input.redirectUri,
+          userAgent: input.userAgent,
+          createdAt: now,
+          lastUsedAt: now,
+          expiresAt: now + LOGIN_CODE_TTL_MS,
+        })
+        .run();
       return {sessionId};
     });
   }
@@ -401,25 +354,29 @@ export class UserHub extends DurableObject<Env> {
       const session = this.findSession(sessionId);
       const invalidGrant = {oauthError: 'invalid_grant'};
       if (!session || session.status !== 'pending') {
-        fail(400, 'bad_request', '登入碼無效或已使用', invalidGrant);
+        fail(400, 'bad_request', '登录码无效或已使用', invalidGrant);
       }
-      if (session.expires_at <= now) {
+      if (session.expiresAt <= now) {
         this.deleteSession(sessionId);
-        fail(400, 'bad_request', '登入碼已過期，請重新登入', invalidGrant);
+        fail(400, 'bad_request', '登录码已过期，请重新登录', invalidGrant);
       }
-      if (session.redirect_uri !== redirectUri) {
-        fail(400, 'bad_request', 'redirect_uri 與授權時不同', invalidGrant);
+      if (session.redirectUri !== redirectUri) {
+        fail(400, 'bad_request', 'redirect_uri 与授权时不同', invalidGrant);
       }
-      if ((await sha256Base64Url(codeVerifier)) !== session.code_challenge) {
+      if ((await sha256Base64Url(codeVerifier)) !== session.codeChallenge) {
         fail(400, 'bad_request', 'code_verifier 不符', invalidGrant);
       }
-      this.sql.exec(
-        "UPDATE sessions SET status = 'active', code_challenge = NULL, last_used_at = ?, expires_at = ?, user_agent = COALESCE(?, user_agent) WHERE id = ?",
-        now,
-        now + SESSION_TTL_MS,
-        userAgent,
-        sessionId,
-      );
+      this.db
+        .update(sessions)
+        .set({
+          status: 'active',
+          codeChallenge: null,
+          lastUsedAt: now,
+          expiresAt: now + SESSION_TTL_MS,
+          userAgent: userAgent ?? session.userAgent,
+        })
+        .where(eq(sessions.id, sessionId))
+        .run();
       return this.accountView(sessionId);
     });
   }
@@ -438,21 +395,14 @@ export class UserHub extends DurableObject<Env> {
         kind: 'pat',
         name,
         status: 'active',
-        code_challenge: null,
-        redirect_uri: null,
-        user_agent: null,
-        created_at: now,
-        last_used_at: now,
-        expires_at: now + expiresInDays * DAY_MS,
+        codeChallenge: null,
+        redirectUri: null,
+        userAgent: null,
+        createdAt: now,
+        lastUsedAt: now,
+        expiresAt: now + expiresInDays * DAY_MS,
       };
-      this.sql.exec(
-        "INSERT INTO sessions (id, kind, name, status, code_challenge, redirect_uri, user_agent, created_at, last_used_at, expires_at) VALUES (?, 'pat', ?, 'active', NULL, NULL, NULL, ?, ?, ?)",
-        token.id,
-        token.name,
-        token.created_at,
-        token.last_used_at,
-        token.expires_at,
-      );
+      this.db.insert(sessions).values(token).run();
       return toSessionView(token, sessionId);
     });
   }
@@ -460,11 +410,12 @@ export class UserHub extends DurableObject<Env> {
   async listSessions(sessionId: string): Promise<HubResult<SessionView[]>> {
     return this.asResult(async () => {
       await this.authorize(sessionId, Date.now());
-      return this.sql
-        .exec<SessionRow>(
-          "SELECT * FROM sessions WHERE status = 'active' ORDER BY last_used_at DESC",
-        )
-        .toArray()
+      return this.db
+        .select()
+        .from(sessions)
+        .where(eq(sessions.status, 'active'))
+        .orderBy(sql`${sessions.lastUsedAt} DESC`)
+        .all()
         .map(row => toSessionView(row, sessionId));
     });
   }
@@ -497,6 +448,7 @@ export class UserHub extends DurableObject<Env> {
     return this.asResult(async () => {
       const now = Date.now();
       await this.authorize(sessionId, now);
+      const account = this.requireAccount();
       const usage = this.usageOn(now);
       const {quotaTimeZone, dailyQuota, maxEntities} = this.config;
       return {
@@ -508,8 +460,8 @@ export class UserHub extends DurableObject<Env> {
         used: {...usage.counts},
         limits: {...dailyQuota},
         totals: {
-          entities: this.liveEntityCount,
-          storageBytes: this.usedStorageBytes,
+          entities: account.liveEntityCount,
+          storageBytes: account.usedStorageBytes,
         },
         totalLimits: {
           entities: maxEntities,
@@ -531,6 +483,7 @@ export class UserHub extends DurableObject<Env> {
     return this.asResult(async () => {
       const now = Date.now();
       await this.authorize(sessionId, now);
+      const account = this.requireAccount();
       const usage = this.usageOn(now);
       const grant: ReadQuotaGrant = {
         reads: this.reserveQuota('reads', options.reserveReads ?? 0, now),
@@ -538,12 +491,12 @@ export class UserHub extends DurableObject<Env> {
       };
       const {journal, pullPlan} = this.selectJournal(options.journal, now);
       return {
-        userId: this.requireUserId(),
+        userId: account.userId,
         day: usage.day,
         grant,
         journal,
-        committedStamp: this.committedStamp,
-        settings: this.settings,
+        committedStamp: this.requireAccount().committedStamp,
+        settings: this.requireAccount().settings,
         pullPlan,
         now,
       };
@@ -561,7 +514,7 @@ export class UserHub extends DurableObject<Env> {
     const session = this.findSession(sessionId);
     const valid =
       session?.status === 'active' &&
-      session.expires_at > now &&
+      session.expiresAt > now &&
       this.usageOn(now).day === day;
     const resetAt = nextMidnightInstant(now, this.config.quotaTimeZone);
     return {
@@ -583,7 +536,7 @@ export class UserHub extends DurableObject<Env> {
   async chargeSignedFileRead(): Promise<HubResult<null>> {
     return this.asResult(async () => {
       const now = Date.now();
-      if (!this.storedUserId) fail(404, 'not_found', '找不到附件');
+      if (!this.accountState) fail(404, 'not_found', '找不到附件');
       this.consumeQuota('requests', 1, now);
       this.consumeQuota('reads', 1, now);
       return null;
@@ -615,27 +568,29 @@ export class UserHub extends DurableObject<Env> {
       return this.serialized(async () => {
         const size = file.bytes.byteLength;
         const {maxFileBytes, maxStorageBytes} = this.config;
-        if (size === 0) fail(400, 'bad_request', '檔案是空的');
+        const account = this.requireAccount();
+        if (size === 0) fail(400, 'bad_request', '文件是空的');
         if (size > maxFileBytes) {
-          fail(413, 'payload_too_large', `單檔上限 ${maxFileBytes} bytes`, {
+          fail(413, 'payload_too_large', `单文件上限 ${maxFileBytes} bytes`, {
             limit: maxFileBytes,
           });
         }
-        if (this.usedStorageBytes + size > maxStorageBytes) {
-          fail(403, 'limit_exceeded', '附件總容量已滿', {
+        if (account.usedStorageBytes + size > maxStorageBytes) {
+          fail(403, 'limit_exceeded', '附件总容量已满', {
             limit: maxStorageBytes,
-            used: this.usedStorageBytes,
+            used: account.usedStorageBytes,
           });
         }
-        const userId = this.requireUserId();
-        const task = await this.loadEntity(entityKey(userId, 'task', taskId));
-        if (!task || task.deletedAt) fail(404, 'not_found', '任務不存在');
+        const task = await this.loadEntity(
+          entityKey(account.userId, 'task', taskId),
+        );
+        if (!task || task.deletedAt) fail(404, 'not_found', '任务不存在');
         const attachments = taskDataOf(task).attachments;
         if (attachments.length >= MAX_ATTACHMENTS_PER_TASK) {
           fail(
             409,
             'limit_exceeded',
-            `每個任務最多 ${MAX_ATTACHMENTS_PER_TASK} 個附件`,
+            `每个任务最多 ${MAX_ATTACHMENTS_PER_TASK} 个附件`,
           );
         }
         this.consumeQuota('uploadBytes', size, now);
@@ -653,10 +608,12 @@ export class UserHub extends DurableObject<Env> {
           contentType: file.contentType,
           size,
         };
-        await this.putWithRetry(blobKey(userId, attachment.id), file.bytes, {
-          metadata,
-        });
-        this.setUsedStorageBytes(this.usedStorageBytes + size);
+        await this.putWithRetry(
+          blobKey(account.userId, attachment.id),
+          file.bytes,
+          {metadata},
+        );
+        this.setUsedStorageBytes(account.usedStorageBytes + size);
         const updated = this.withNewRevision({
           ...task,
           data: {...task.data, attachments: [...attachments, attachment]},
@@ -678,9 +635,9 @@ export class UserHub extends DurableObject<Env> {
       await this.authorize(sessionId, now);
       return this.serialized(async () => {
         const task = await this.loadEntity(
-          entityKey(this.requireUserId(), 'task', taskId),
+          entityKey(this.requireAccount().userId, 'task', taskId),
         );
-        if (!task) fail(404, 'not_found', '任務不存在');
+        if (!task) fail(404, 'not_found', '任务不存在');
         const attachments = taskDataOf(task).attachments;
         const target = attachments.find(({id}) => id === attachmentId);
         if (!target) fail(404, 'not_found', '附件不存在');
@@ -705,34 +662,42 @@ export class UserHub extends DurableObject<Env> {
   ): Promise<HubResult<{subscriptions: number}>> {
     return this.asResult(async () => {
       await this.authorize(sessionId, Date.now());
-      const exists =
-        this.sql
-          .exec(
-            'SELECT 1 FROM push_subscriptions WHERE endpoint = ?',
-            subscription.endpoint,
-          )
-          .toArray().length > 0;
-      const count = this.sql
-        .exec<{count: number}>(
-          'SELECT COUNT(*) AS count FROM push_subscriptions',
-        )
-        .one().count;
-      if (!exists && count >= MAX_PUSH_SUBSCRIPTIONS) {
+      const exists = Boolean(
+        this.db
+          .select({endpoint: pushSubscriptions.endpoint})
+          .from(pushSubscriptions)
+          .where(eq(pushSubscriptions.endpoint, subscription.endpoint))
+          .get(),
+      );
+      const subscriptionCount = this.countRows(pushSubscriptions);
+      if (!exists && subscriptionCount >= MAX_PUSH_SUBSCRIPTIONS) {
         fail(
           409,
           'limit_exceeded',
-          `最多 ${MAX_PUSH_SUBSCRIPTIONS} 個推播訂閱`,
+          `最多 ${MAX_PUSH_SUBSCRIPTIONS} 个推送订阅`,
         );
       }
-      this.sql.exec(
-        'INSERT INTO push_subscriptions (endpoint, p256dh, auth, device, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth, device = excluded.device',
-        subscription.endpoint,
-        subscription.keys.p256dh,
-        subscription.keys.auth,
-        subscription.device,
-        Date.now(),
-      );
-      return {subscriptions: exists ? count : count + 1};
+      this.db
+        .insert(pushSubscriptions)
+        .values({
+          endpoint: subscription.endpoint,
+          p256dh: subscription.keys.p256dh,
+          auth: subscription.keys.auth,
+          device: subscription.device,
+          createdAt: Date.now(),
+        })
+        .onConflictDoUpdate({
+          target: pushSubscriptions.endpoint,
+          set: {
+            p256dh: subscription.keys.p256dh,
+            auth: subscription.keys.auth,
+            device: subscription.device,
+          },
+        })
+        .run();
+      return {
+        subscriptions: exists ? subscriptionCount : subscriptionCount + 1,
+      };
     });
   }
 
@@ -742,10 +707,10 @@ export class UserHub extends DurableObject<Env> {
   ): Promise<HubResult<{removed: boolean}>> {
     return this.asResult(async () => {
       await this.authorize(sessionId, Date.now());
-      const deleted = this.sql.exec(
-        'DELETE FROM push_subscriptions WHERE endpoint = ?',
-        endpoint,
-      );
+      const deleted = this.db
+        .delete(pushSubscriptions)
+        .where(eq(pushSubscriptions.endpoint, endpoint))
+        .run();
       return {removed: deleted.rowsWritten > 0};
     });
   }
@@ -754,15 +719,13 @@ export class UserHub extends DurableObject<Env> {
     return this.asResult(async () => {
       const now = Date.now();
       await this.authorize(sessionId, now);
-      const subscriptions = this.sql
-        .exec<PushSubscriptionRow>('SELECT * FROM push_subscriptions')
-        .toArray();
-      if (subscriptions.length === 0) fail(404, 'not_found', '沒有推播訂閱');
+      const subscriptions = this.db.select().from(pushSubscriptions).all();
+      if (subscriptions.length === 0) fail(404, 'not_found', '没有推送订阅');
       this.consumeQuota('pushes', subscriptions.length, now);
       const message = JSON.stringify({
         type: 'test',
         title: 'FurTodo',
-        body: '推播測試成功 🎉',
+        body: '推送测试成功 🎉',
         at: new Date(now).toISOString(),
       });
       const results = await this.pushToSubscriptions(
@@ -806,11 +769,47 @@ export class UserHub extends DurableObject<Env> {
     return run;
   }
 
-  private requireUserId(): string {
-    if (this.storedUserId === null) {
-      throw new Error('UserHub used before its first login');
-    }
-    return this.storedUserId;
+  private requireAccount(): AccountState {
+    const state = this.accountState;
+    if (!state) throw new Error('UserHub used before its first login');
+    return state;
+  }
+
+  /** Returns the number of rows in `table`. */
+  private countRows(table: SQLiteTable): number {
+    return this.db.select({value: count()}).from(table).get()?.value ?? 0;
+  }
+
+  private loadAccount(): AccountState | null {
+    const row = this.db
+      .select()
+      .from(account)
+      .where(eq(account.id, ACCOUNT_ID))
+      .get();
+    if (!row) return null;
+    return {
+      userId: row.userId,
+      profile: row.profile,
+      orgs: row.orgs,
+      membership: row.membership,
+      membershipVerifiedAt: row.membershipVerifiedAt,
+      sealedGithubToken: row.sealedGithubToken,
+      settings: row.settings,
+      committedStamp: row.committedStamp,
+      liveEntityCount: row.liveEntityCount,
+      usedStorageBytes: row.usedStorageBytes,
+      prunedAt: row.prunedAt,
+    };
+  }
+
+  /** Writes the in-memory account state back to its single row. */
+  private saveAccount(): void {
+    const state = this.requireAccount();
+    this.db
+      .insert(account)
+      .values({id: ACCOUNT_ID, ...state})
+      .onConflictDoUpdate({target: account.id, set: {...state}})
+      .run();
   }
 
   /**
@@ -822,22 +821,21 @@ export class UserHub extends DurableObject<Env> {
     if (!session || session.status !== 'active') {
       fail(401, 'invalid_token', 'Session 不存在或已登出');
     }
-    if (session.expires_at <= now) {
+    if (session.expiresAt <= now) {
       this.deleteSession(sessionId);
-      fail(401, 'session_expired', 'Session 已過期，請重新登入');
+      fail(401, 'session_expired', 'Session 已过期，请重新登录');
     }
     await this.ensureMembership(now);
     this.consumeQuota('requests', 1, now);
-    if (now - session.last_used_at > SESSION_TOUCH_MS) {
+    if (now - session.lastUsedAt > SESSION_TOUCH_MS) {
       // Personal tokens keep their fixed expiry; login sessions slide.
       const expiresAt =
-        session.kind === 'oauth' ? now + SESSION_TTL_MS : session.expires_at;
-      this.sql.exec(
-        'UPDATE sessions SET last_used_at = ?, expires_at = ? WHERE id = ?',
-        now,
-        expiresAt,
-        sessionId,
-      );
+        session.kind === 'oauth' ? now + SESSION_TTL_MS : session.expiresAt;
+      this.db
+        .update(sessions)
+        .set({lastUsedAt: now, expiresAt})
+        .where(eq(sessions.id, sessionId))
+        .run();
     }
   }
 
@@ -846,7 +844,7 @@ export class UserHub extends DurableObject<Env> {
    * session; while GitHub is unreachable, requests continue for a grace period.
    */
   private async ensureMembership(now: number): Promise<void> {
-    const verifiedAt = Number(this.getState('membership_verified_at') ?? 0);
+    const verifiedAt = this.accountState?.membershipVerifiedAt ?? 0;
     if (now - verifiedAt < MEMBERSHIP_RECHECK_MS) return;
     this.membershipCheck ??= this.recheckMembership().finally(() => {
       this.membershipCheck = null;
@@ -860,45 +858,45 @@ export class UserHub extends DurableObject<Env> {
         return fail(
           403,
           'not_org_member',
-          `你已不是 ${org} 組織成員，或已撤銷 GitHub 授權；請重新登入`,
+          `你已不是 ${org} 组织成员，或已撤销 GitHub 授权；请重新登录`,
         );
       case 'restricted':
         return fail(
           403,
           'org_access_restricted',
-          `${org} 啟用了 OAuth App 存取限制，請組織 owner 核准本應用`,
+          `${org} 启用了 OAuth App 访问限制，请组织 owner 批准本应用`,
         );
       default:
         if (now - verifiedAt > MEMBERSHIP_GRACE_MS) {
-          fail(503, 'github_unavailable', '暫時無法向 GitHub 驗證組織成員身分');
+          fail(503, 'github_unavailable', '暂时无法向 GitHub 验证组织成员身份');
         }
     }
   }
 
   private async recheckMembership(): Promise<MembershipCheck> {
-    const sealedToken = this.getState('github_token');
-    const profile = this.getJsonState('profile');
-    const token = sealedToken
+    const state = this.accountState;
+    const token = state
       ? await openJson<string>(
           this.env.TOKEN_SECRET,
           'ghtoken-aes',
-          sealedToken,
+          state.sealedGithubToken,
         )
       : null;
-    if (!token || !profile) {
+    if (!state || !token) {
       this.revokeAllSessions();
       return 'revoked';
     }
     const result = await checkMembership(
       this.config,
       token,
-      profile.login,
+      state.profile.login,
       this.env.GITHUB_ORG_TOKEN,
     );
     switch (result.status) {
       case 'active':
-        this.setState('membership_verified_at', String(Date.now()));
-        this.setJsonState('membership', {role: result.role, via: result.via});
+        state.membershipVerifiedAt = Date.now();
+        state.membership = {role: result.role, via: result.via};
+        this.saveAccount();
         return 'ok';
       case 'restricted':
         return 'restricted';
@@ -906,7 +904,7 @@ export class UserHub extends DurableObject<Env> {
         console.warn(
           JSON.stringify({
             msg: 'membership recheck unavailable',
-            userId: this.storedUserId,
+            userId: state.userId,
             detail: result.detail,
           }),
         );
@@ -915,7 +913,7 @@ export class UserHub extends DurableObject<Env> {
         console.log(
           JSON.stringify({
             msg: 'membership revoked',
-            userId: this.storedUserId,
+            userId: state.userId,
             status: result.status,
           }),
         );
@@ -925,31 +923,35 @@ export class UserHub extends DurableObject<Env> {
   }
 
   private revokeAllSessions(): void {
-    this.sql.exec('DELETE FROM sessions');
-    this.sql.exec("DELETE FROM state WHERE key = 'github_token'");
+    this.db.delete(sessions).run();
+    if (this.accountState) {
+      // Drop the stored token so a revoked member cannot re-verify with it.
+      this.accountState.sealedGithubToken = '';
+      this.saveAccount();
+    }
   }
 
-  private usageOn(now: number): UsageDay {
+  private usageOn(now: number): {day: string; counts: QuotaCounts} {
     const day = localDate(now, this.config.quotaTimeZone);
     if (this.usageCache?.day !== day) {
-      const [row] = this.sql
-        .exec<{counts: string}>('SELECT counts FROM usage WHERE day = ?', day)
-        .toArray();
-      const stored = row
-        ? (JSON.parse(row.counts) as Partial<QuotaCounts>)
-        : {};
-      this.usageCache = {day, counts: {...ZERO_COUNTS, ...stored}};
+      const row = this.db
+        .select()
+        .from(usageDays)
+        .where(eq(usageDays.day, day))
+        .get();
+      this.usageCache = {day, counts: {...ZERO_COUNTS, ...(row?.counts ?? {})}};
     }
     return this.usageCache;
   }
 
   private persistUsage(): void {
     if (!this.usageCache) return;
-    this.sql.exec(
-      'INSERT INTO usage (day, counts) VALUES (?, ?) ON CONFLICT(day) DO UPDATE SET counts = excluded.counts',
-      this.usageCache.day,
-      JSON.stringify(this.usageCache.counts),
-    );
+    const {day, counts} = this.usageCache;
+    this.db
+      .insert(usageDays)
+      .values({day, counts})
+      .onConflictDoUpdate({target: usageDays.day, set: {counts}})
+      .run();
   }
 
   private quotaExceeded(kind: QuotaKind, now: number): ErrorPayload {
@@ -958,7 +960,7 @@ export class UserHub extends DurableObject<Env> {
     return {
       status: 429,
       code: 'quota_exceeded',
-      message: `今日 ${kind} 配額已用完（每日上限 ${limit}）`,
+      message: `今日 ${kind} 配额已用完（每日上限 ${limit}）`,
       details: {kind, limit, resetAt: new Date(resetAt).toISOString()},
       retryAfter: Math.ceil((resetAt - now) / 1000),
     };
@@ -996,99 +998,70 @@ export class UserHub extends DurableObject<Env> {
     return granted;
   }
 
-  private getState(key: StringStateKey | keyof JsonState): string | null {
-    const [row] = this.sql
-      .exec<{value: string}>('SELECT value FROM state WHERE key = ?', key)
-      .toArray();
-    return row?.value ?? null;
-  }
-
-  private setState(key: StringStateKey, value: string): void {
-    this.sql.exec(
-      'INSERT INTO state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
-      key,
-      value,
-    );
-  }
-
-  private getJsonState<K extends keyof JsonState>(key: K): JsonState[K] | null {
-    const value = this.getState(key);
-    return value ? (JSON.parse(value) as JsonState[K]) : null;
-  }
-
-  private setJsonState<K extends keyof JsonState>(
-    key: K,
-    value: JsonState[K],
-  ): void {
-    this.sql.exec(
-      'INSERT INTO state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
-      key,
-      JSON.stringify(value),
-    );
-  }
-
   private findSession(sessionId: string): SessionRow | null {
-    const [row] = this.sql
-      .exec<SessionRow>('SELECT * FROM sessions WHERE id = ?', sessionId)
-      .toArray();
+    const row = this.db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.id, sessionId))
+      .get();
     return row ?? null;
   }
 
   /** Deletes a session; returns whether it existed. */
   private deleteSession(sessionId: string): boolean {
-    return (
-      this.sql.exec('DELETE FROM sessions WHERE id = ?', sessionId)
-        .rowsWritten > 0
-    );
+    const result = this.db
+      .delete(sessions)
+      .where(eq(sessions.id, sessionId))
+      .run();
+    return result.rowsWritten > 0;
   }
 
   private accountView(sessionId: string): AccountView {
-    const profile = this.getJsonState('profile');
+    const state = this.requireAccount();
     const session = this.findSession(sessionId);
-    if (!profile || !session) throw new Error('Account state is incomplete');
-    const membership = this.getJsonState('membership') ?? {
-      role: 'member',
-      via: 'user_token',
-    };
-    const verifiedAt = Number(this.getState('membership_verified_at') ?? 0);
+    if (!session) throw new Error('Account state is incomplete');
     const settingsEntity = this.entityCache.get(
-      entityKey(this.requireUserId(), 'settings', SETTINGS_ID),
+      entityKey(state.userId, 'settings', SETTINGS_ID),
     );
     return {
-      user: profile,
+      user: state.profile,
       membership: {
         org: this.config.githubOrg,
-        ...membership,
-        verifiedAt: new Date(verifiedAt).toISOString(),
+        ...state.membership,
+        verifiedAt: new Date(state.membershipVerifiedAt).toISOString(),
       },
-      orgs: this.getJsonState('orgs') ?? [],
+      orgs: state.orgs,
       session: toSessionView(session, sessionId),
       settings: settingsEntity
         ? this.toApi(settingsEntity)
-        : unsavedSettingsEntity(this.settings),
+        : unsavedSettingsEntity(state.settings),
     };
   }
 
   /** Makes room for one more session by dropping least recently used logins. */
   private evictOldestSessions(): void {
-    const count = this.sql
-      .exec<{count: number}>('SELECT COUNT(*) AS count FROM sessions')
-      .one().count;
-    if (count < MAX_SESSIONS) return;
-    this.sql.exec(
-      "DELETE FROM sessions WHERE id IN (SELECT id FROM sessions WHERE kind = 'oauth' ORDER BY last_used_at ASC LIMIT ?)",
-      count - MAX_SESSIONS + 1,
-    );
+    const sessionCount = this.countRows(sessions);
+    if (sessionCount < MAX_SESSIONS) return;
+    const oldest = this.db
+      .select({id: sessions.id})
+      .from(sessions)
+      .where(eq(sessions.kind, 'oauth'))
+      .orderBy(sql`${sessions.lastUsedAt} ASC`)
+      .limit(sessionCount - MAX_SESSIONS + 1)
+      .all()
+      .map(row => row.id);
+    if (oldest.length === 0) return;
+    this.db.delete(sessions).where(inArray(sessions.id, oldest)).run();
   }
 
   private setUsedStorageBytes(bytes: number): void {
-    this.usedStorageBytes = Math.max(0, bytes);
-    this.setState('used_storage_bytes', String(this.usedStorageBytes));
+    this.requireAccount().usedStorageBytes = Math.max(0, bytes);
+    this.saveAccount();
   }
 
   private setLiveEntityCount(count: number): void {
-    this.liveEntityCount = Math.max(0, count);
-    this.setState('live_entity_count', String(this.liveEntityCount));
+    this.requireAccount().liveEntityCount = Math.max(0, count);
+    this.saveAccount();
   }
 
   /**
@@ -1114,7 +1087,7 @@ export class UserHub extends DurableObject<Env> {
   }
 
   private toApi(entity: StoredEntity): ApiEntity {
-    return toApiEntity(entity, this.settings.timezone);
+    return toApiEntity(entity, this.requireAccount().settings.timezone);
   }
 
   private selectJournal(
@@ -1122,59 +1095,50 @@ export class UserHub extends DurableObject<Env> {
     now: number,
   ): JournalSelection {
     const recent = () =>
-      this.queryRawJournal(
-        'SELECT key, metadata, body FROM journal WHERE written_at > ?',
-        now - SCAN_OVERLAY_MS,
-      );
+      this.db
+        .select()
+        .from(journalEntries)
+        .where(gt(journalEntries.writtenAt, now - SCAN_OVERLAY_MS))
+        .all();
     switch (request.mode) {
       case 'scan':
         return {journal: recent(), pullPlan: null};
       case 'keys':
         return {journal: this.rawJournalForKeys(request.keys), pullPlan: null};
-      case 'pull':
-        if (request.since >= this.committedStamp) {
+      case 'pull': {
+        const committedStamp = this.requireAccount().committedStamp;
+        if (request.since >= committedStamp) {
           return {journal: [], pullPlan: 'upToDate'};
         }
         if (
           request.since > 0 &&
           request.since >= now - JOURNAL_WINDOW_MS + PULL_FAST_PATH_MARGIN_MS
         ) {
-          const changed = this.queryRawJournal(
-            'SELECT key, metadata, body FROM journal WHERE updated_at > ? ORDER BY updated_at',
-            request.since,
-          );
+          const changed = this.db
+            .select()
+            .from(journalEntries)
+            .where(gt(journalEntries.updatedAt, request.since))
+            .orderBy(sql`${journalEntries.updatedAt} ASC`)
+            .all();
           return {journal: changed, pullPlan: 'journal'};
         }
         return {journal: recent(), pullPlan: 'scan'};
+      }
       default:
         return {journal: [], pullPlan: null};
     }
-  }
-
-  private queryRawJournal(
-    query: string,
-    ...bindings: Array<string | number>
-  ): RawJournalEntry[] {
-    return this.sql
-      .exec<JournalRow>(query, ...bindings)
-      .toArray()
-      .map(row => ({
-        key: row.key,
-        metadata: JSON.parse(row.metadata) as EntityMetadata,
-        body: row.body,
-      }));
   }
 
   private rawJournalForKeys(keys: string[]): RawJournalEntry[] {
     const entries: RawJournalEntry[] = [];
     for (let i = 0; i < keys.length; i += SQL_MAX_PARAMS) {
       const chunk = keys.slice(i, i + SQL_MAX_PARAMS);
-      const placeholders = chunk.map(() => '?').join(',');
       entries.push(
-        ...this.queryRawJournal(
-          `SELECT key, metadata, body FROM journal WHERE key IN (${placeholders})`,
-          ...chunk,
-        ),
+        ...this.db
+          .select()
+          .from(journalEntries)
+          .where(inArray(journalEntries.key, chunk))
+          .all(),
       );
     }
     return entries;
@@ -1185,9 +1149,11 @@ export class UserHub extends DurableObject<Env> {
   }
 
   private fullJournalOverlay(): Map<string, JournalEntry> {
-    const entries = this.queryRawJournal(
-      'SELECT key, metadata, body FROM journal',
-    ).map(entry => parseJournalEntry(entry));
+    const entries = this.db
+      .select()
+      .from(journalEntries)
+      .all()
+      .map(entry => parseJournalEntry(entry));
     return new Map(entries.map(entry => [entry.key, entry]));
   }
 
@@ -1262,7 +1228,7 @@ export class UserHub extends DurableObject<Env> {
       fail(
         503,
         'storage_busy',
-        '同一筆資料寫入太頻繁，請稍後重試（客戶端請對編輯做 debounce）',
+        '同一份数据写入过于频繁，请稍后重试（客户端请对编辑做 debounce）',
       );
     }
   }
@@ -1270,8 +1236,9 @@ export class UserHub extends DurableObject<Env> {
   /** Writes an entity to KV and the journal, then updates derived state. */
   private async persistEntity(entity: StoredEntity): Promise<void> {
     const now = Date.now();
+    const state = this.requireAccount();
     this.consumeQuota('writes', 1, now);
-    const key = entityKey(this.requireUserId(), entity.kind, entity.id);
+    const key = entityKey(state.userId, entity.kind, entity.id);
     const metadata = metadataFor(entity);
     const body = JSON.stringify(entity);
     await this.putWithRetry(
@@ -1281,37 +1248,51 @@ export class UserHub extends DurableObject<Env> {
         ? {metadata, expirationTtl: TOMBSTONE_TTL_SECONDS}
         : {metadata},
     );
-    this.sql.exec(
-      'INSERT INTO journal (key, updated_at, metadata, body, written_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET updated_at = excluded.updated_at, metadata = excluded.metadata, body = excluded.body, written_at = excluded.written_at',
-      key,
-      entity.updatedAt,
-      JSON.stringify(metadata),
-      body,
-      now,
-    );
-    if (entity.updatedAt > this.committedStamp) {
-      this.committedStamp = entity.updatedAt;
-      this.setState('committed_stamp', String(entity.updatedAt));
+    this.db
+      .insert(journalEntries)
+      .values({
+        key,
+        updatedAt: entity.updatedAt,
+        metadata,
+        body,
+        writtenAt: now,
+      })
+      .onConflictDoUpdate({
+        target: journalEntries.key,
+        set: {
+          updatedAt: entity.updatedAt,
+          metadata,
+          body,
+          writtenAt: now,
+        },
+      })
+      .run();
+    if (entity.updatedAt > state.committedStamp) {
+      state.committedStamp = entity.updatedAt;
+      this.saveAccount();
     }
     this.cacheEntity(key, entity);
     if (entity.kind === 'settings') {
-      this.settings = settingsFrom(entity);
-      this.setJsonState('settings', this.settings);
+      state.settings = settingsFrom(entity);
+      this.saveAccount();
     }
     if (entity.kind === 'task') this.scheduleTaskReminders(entity, now);
   }
 
   private async deleteBlob(attachmentId: string, size: number): Promise<void> {
     this.consumeQuota('writes', 1, Date.now());
-    await this.env.DATA.delete(blobKey(this.requireUserId(), attachmentId));
-    this.setUsedStorageBytes(this.usedStorageBytes - size);
+    await this.env.DATA.delete(
+      blobKey(this.requireAccount().userId, attachmentId),
+    );
+    const state = this.requireAccount();
+    this.setUsedStorageBytes(state.usedStorageBytes - size);
   }
 
   /** Applies mutations in order; one rejection does not stop the rest. */
   private async applyMutationBatch(
     mutations: ValidatedMutation[],
   ): Promise<MutationOutcome[]> {
-    const userId = this.requireUserId();
+    const userId = this.requireAccount().userId;
     this.pruneExpiredState(Date.now(), /* force= */ false);
     await this.prefetchEntities(
       mutations.map(mutation => entityKey(userId, mutation.type, mutation.id)),
@@ -1357,11 +1338,11 @@ export class UserHub extends DurableObject<Env> {
     mutation: ValidatedMutation,
   ): Promise<MutationEffect> {
     if (mutation.type === 'settings' && mutation.id !== SETTINGS_ID) {
-      fail(400, 'validation_error', `settings 的 id 固定為 "${SETTINGS_ID}"`);
+      fail(400, 'validation_error', `settings 的 id 固定为 "${SETTINGS_ID}"`);
     }
     const now = Date.now();
     const current = await this.loadEntity(
-      entityKey(this.requireUserId(), mutation.type, mutation.id),
+      entityKey(this.requireAccount().userId, mutation.type, mutation.id),
     );
     switch (mutation.op) {
       case 'upsert':
@@ -1371,7 +1352,7 @@ export class UserHub extends DurableObject<Env> {
       case 'restore':
         return this.applyRestore(current, now);
       default:
-        return fail(400, 'validation_error', '不支援的 op');
+        return fail(400, 'validation_error', '不支持的 op');
     }
   }
 
@@ -1384,7 +1365,7 @@ export class UserHub extends DurableObject<Env> {
     // Edit times from the future are clamped to now.
     const editedAt = Math.min(mutation.editedAt ?? now, now);
     if (!current) {
-      if (mutation.mustExist) fail(404, 'not_found', '實體不存在');
+      if (mutation.mustExist) fail(404, 'not_found', '实体不存在');
       const missing = REQUIRED_ON_CREATE[mutation.type].filter(
         field => patch[field] === undefined,
       );
@@ -1392,7 +1373,7 @@ export class UserHub extends DurableObject<Env> {
         fail(
           404,
           'not_found',
-          `實體不存在；建立時必須提供 ${missing.join(', ')}`,
+          `实体不存在；创建时必须提供 ${missing.join(', ')}`,
           {missing},
         );
       }
@@ -1414,11 +1395,11 @@ export class UserHub extends DurableObject<Env> {
         );
       }
       await this.persistEntity(created);
-      this.setLiveEntityCount(this.liveEntityCount + 1);
+      this.setLiveEntityCount(this.requireAccount().liveEntityCount + 1);
       return {status: 'applied', entity: created, spawned: []};
     }
     if (current.deletedAt) {
-      fail(409, 'deleted', '實體已在垃圾桶；請先 restore 再修改');
+      fail(409, 'deleted', '实体在回收站中；请先 restore 再修改');
     }
     const {next, changedFields} = mergePatch(current, patch, editedAt);
     if (changedFields.length === 0) {
@@ -1447,14 +1428,14 @@ export class UserHub extends DurableObject<Env> {
     current: StoredEntity | null,
   ): Promise<MutationEffect> {
     if (mutation.type === 'settings') {
-      fail(400, 'validation_error', 'settings 不能刪除');
+      fail(400, 'validation_error', 'settings 不能删除');
     }
     if (!current || current.deletedAt) {
       return {status: 'noop', entity: current, spawned: []};
     }
     const deleted = this.withDeletion(current, null);
     await this.persistEntity(deleted);
-    this.setLiveEntityCount(this.liveEntityCount - 1);
+    this.setLiveEntityCount(this.requireAccount().liveEntityCount - 1);
     this.onDeleted(deleted);
     return {status: 'applied', entity: deleted, spawned: []};
   }
@@ -1464,7 +1445,7 @@ export class UserHub extends DurableObject<Env> {
     now: number,
   ): Promise<MutationEffect> {
     if (!current) {
-      fail(404, 'not_found', '實體不存在（可能已超過 30 天被永久刪除）');
+      fail(404, 'not_found', '实体不存在（可能已超过 30 天被永久删除）');
     }
     if (!current.deletedAt) {
       return {status: 'noop', entity: current, spawned: []};
@@ -1479,29 +1460,30 @@ export class UserHub extends DurableObject<Env> {
       restored = await this.detachFromDeletedList(restored, now);
     }
     await this.persistEntity(restored);
-    this.setLiveEntityCount(this.liveEntityCount + 1);
+    this.setLiveEntityCount(this.requireAccount().liveEntityCount + 1);
     this.onRestored(restored);
     return {status: 'applied', entity: restored, spawned: []};
   }
 
   private async ensureEntityCapacity(adding: number): Promise<void> {
+    const state = this.requireAccount();
     const {maxEntities} = this.config;
-    if (this.liveEntityCount + adding <= maxEntities) return;
+    if (state.liveEntityCount + adding <= maxEntities) return;
     // The counter drifts upward when a write fails midway; recount first.
     const rows = await scanMetadata(
       this.env.DATA,
-      this.requireUserId(),
+      state.userId,
       null,
       this.quotaCharger,
       this.fullJournalOverlay(),
     );
     const live = [...rows.values()].filter(row => !row.metadata.deletedAt);
     this.setLiveEntityCount(live.length);
-    if (this.liveEntityCount + adding > maxEntities) {
+    if (this.requireAccount().liveEntityCount + adding > maxEntities) {
       fail(
         403,
         'limit_exceeded',
-        `資料筆數已達上限 ${maxEntities}（含任務、清單、資料夾、標籤）`,
+        `数据条数已达上限 ${maxEntities}（含任务、清单、文件夹、标签）`,
         {limit: maxEntities},
       );
     }
@@ -1521,7 +1503,7 @@ export class UserHub extends DurableObject<Env> {
     const fields = taskDataOf(task);
     const data: Record<string, unknown> = {...task.data};
     const clock = {...task.clock};
-    const {timezone, weekStart} = this.settings;
+    const {timezone, weekStart} = this.requireAccount().settings;
     if (!fields.dueDate && fields.dueTime) {
       data.dueTime = null;
       clock.dueTime = editedAt;
@@ -1560,7 +1542,7 @@ export class UserHub extends DurableObject<Env> {
     const rule = fields.recurrence;
     const wasCompleted = taskDataOf(previous).completedAt !== null;
     if (!rule || wasCompleted || !fields.completedAt) return [];
-    const {timezone, weekStart} = this.settings;
+    const {timezone, weekStart} = this.requireAccount().settings;
     const occurrence = nextOccurrence({
       rule,
       currentDue: fields.dueDate,
@@ -1571,7 +1553,9 @@ export class UserHub extends DurableObject<Env> {
     if (!occurrence) return [];
     const seriesId = fields.seriesId ?? task.id;
     const id = await nameBasedUuid(`${seriesId}|${occurrence.dueDate}`);
-    if (await this.loadEntity(entityKey(this.requireUserId(), 'task', id))) {
+    if (
+      await this.loadEntity(entityKey(this.requireAccount().userId, 'task', id))
+    ) {
       return [];
     }
     await this.ensureEntityCapacity(1);
@@ -1607,7 +1591,7 @@ export class UserHub extends DurableObject<Env> {
     };
     const spawned = newEntity('task', id, patch, now, this.nextStamp());
     await this.persistEntity(spawned);
-    this.setLiveEntityCount(this.liveEntityCount + 1);
+    this.setLiveEntityCount(this.requireAccount().liveEntityCount + 1);
     return [spawned];
   }
 
@@ -1619,7 +1603,7 @@ export class UserHub extends DurableObject<Env> {
     const listId = taskDataOf(task).listId;
     if (!listId) return task;
     const list = await this.loadEntity(
-      entityKey(this.requireUserId(), 'list', listId),
+      entityKey(this.requireAccount().userId, 'list', listId),
     );
     if (list && !list.deletedAt) return task;
     return {
@@ -1659,34 +1643,36 @@ export class UserHub extends DurableObject<Env> {
       this.enqueueJob('cascade_list', entity.id, job, Date.now());
     }
     if (entity.kind === 'task') {
-      this.sql.exec(
-        "DELETE FROM jobs WHERE type = 'purge_blobs' AND ref = ?",
-        entity.id,
-      );
+      this.cancelJob('purge_blobs', entity.id);
     }
   }
 
   /** Mirrors a task's upcoming reminders into the alarm-driven table. */
   private scheduleTaskReminders(task: StoredEntity, now: number): void {
-    this.sql.exec('DELETE FROM reminders WHERE task_id = ?', task.id);
+    this.db.delete(reminders).where(eq(reminders.taskId, task.id)).run();
     const fields = taskDataOf(task);
     if (task.deletedAt || fields.completedAt) return;
-    const reminderPayload: ReminderPayload = {
+    const payload: ReminderPayload = {
       title: fields.title,
       dueDate: fields.dueDate,
       dueTime: fields.dueTime,
     };
-    const payload = JSON.stringify(reminderPayload);
     for (const reminder of fields.reminders) {
       const fireAt = Date.parse(reminder.at);
       if (fireAt > now - REMINDER_PAST_TOLERANCE_MS) {
-        this.sql.exec(
-          'INSERT OR REPLACE INTO reminders (task_id, reminder_id, fire_at, payload) VALUES (?, ?, ?, ?)',
-          task.id,
-          reminder.id,
-          fireAt,
-          payload,
-        );
+        this.db
+          .insert(reminders)
+          .values({
+            taskId: task.id,
+            reminderId: reminder.id,
+            fireAt,
+            payload,
+          })
+          .onConflictDoUpdate({
+            target: [reminders.taskId, reminders.reminderId],
+            set: {fireAt, payload},
+          })
+          .run();
       }
     }
   }
@@ -1697,23 +1683,26 @@ export class UserHub extends DurableObject<Env> {
     payload: CascadeListJob | PurgeBlobsJob,
     runAt: number,
   ): void {
-    this.sql.exec(
-      'INSERT INTO jobs (type, ref, payload, run_at) VALUES (?, ?, ?, ?)',
-      type,
-      ref,
-      JSON.stringify(payload),
-      runAt,
-    );
+    this.db.insert(jobs).values({type, ref, payload, runAt}).run();
+  }
+
+  private cancelJob(type: JobType, ref: string): void {
+    this.db
+      .delete(jobs)
+      .where(and(eq(jobs.type, type), eq(jobs.ref, ref)))
+      .run();
   }
 
   private async rescheduleAlarm(): Promise<void> {
-    const nextReminderAt = this.sql
-      .exec<{at: number | null}>('SELECT MIN(fire_at) AS at FROM reminders')
-      .one().at;
-    const nextJobAt = this.sql
-      .exec<{at: number | null}>('SELECT MIN(run_at) AS at FROM jobs')
-      .one().at;
-    const candidates = [nextReminderAt, nextJobAt].filter(
+    const nextReminder = this.db
+      .select({at: min(reminders.fireAt)})
+      .from(reminders)
+      .get()?.at;
+    const nextJob = this.db
+      .select({at: min(jobs.runAt)})
+      .from(jobs)
+      .get()?.at;
+    const candidates = [nextReminder, nextJob].filter(
       (at): at is number => typeof at === 'number',
     );
     if (candidates.length === 0) {
@@ -1727,43 +1716,44 @@ export class UserHub extends DurableObject<Env> {
   }
 
   private async fireDueReminders(now: number): Promise<void> {
-    const due = this.sql
-      .exec<ReminderRow>(
-        'SELECT * FROM reminders WHERE fire_at <= ? ORDER BY fire_at LIMIT ?',
-        now + ALARM_EARLY_TOLERANCE_MS,
-        REMINDERS_PER_ALARM,
-      )
-      .toArray();
+    const due = this.db
+      .select()
+      .from(reminders)
+      .where(lte(reminders.fireAt, now + ALARM_EARLY_TOLERANCE_MS))
+      .orderBy(sql`${reminders.fireAt} ASC`)
+      .limit(REMINDERS_PER_ALARM)
+      .all();
     if (due.length === 0) return;
-    const subscriptions = this.sql
-      .exec<PushSubscriptionRow>('SELECT * FROM push_subscriptions')
-      .toArray();
+    const subscriptions = this.db.select().from(pushSubscriptions).all();
     for (const reminder of due) {
-      this.sql.exec(
-        'DELETE FROM reminders WHERE task_id = ? AND reminder_id = ?',
-        reminder.task_id,
-        reminder.reminder_id,
-      );
+      this.db
+        .delete(reminders)
+        .where(
+          and(
+            eq(reminders.taskId, reminder.taskId),
+            eq(reminders.reminderId, reminder.reminderId),
+          ),
+        )
+        .run();
       if (subscriptions.length === 0) continue;
       if (!this.tryConsumeQuota('pushes', subscriptions.length, now)) {
         console.warn(
           JSON.stringify({
             msg: 'push quota exhausted; reminder dropped',
-            userId: this.storedUserId,
-            taskId: reminder.task_id,
+            userId: this.accountState?.userId,
+            taskId: reminder.taskId,
           }),
         );
         continue;
       }
-      const details = JSON.parse(reminder.payload) as ReminderPayload;
       const message = JSON.stringify({
         type: 'reminder',
-        taskId: reminder.task_id,
-        reminderId: reminder.reminder_id,
-        ...details,
-        at: new Date(reminder.fire_at).toISOString(),
+        taskId: reminder.taskId,
+        reminderId: reminder.reminderId,
+        ...reminder.payload,
+        at: new Date(reminder.fireAt).toISOString(),
       });
-      await this.pushToSubscriptions(subscriptions, message, reminder.task_id);
+      await this.pushToSubscriptions(subscriptions, message, reminder.taskId);
     }
   }
 
@@ -1810,17 +1800,17 @@ export class UserHub extends DurableObject<Env> {
       console.warn(
         JSON.stringify({
           msg: 'web push failed',
-          userId: this.storedUserId,
+          userId: this.accountState?.userId,
           error: String(error),
         }),
       );
       result = {ok: false, status: 0, gone: false};
     }
     if (result.gone) {
-      this.sql.exec(
-        'DELETE FROM push_subscriptions WHERE endpoint = ?',
-        subscription.endpoint,
-      );
+      this.db
+        .delete(pushSubscriptions)
+        .where(eq(pushSubscriptions.endpoint, subscription.endpoint))
+        .run();
     }
     return {
       endpoint: new URL(subscription.endpoint).origin,
@@ -1830,20 +1820,20 @@ export class UserHub extends DurableObject<Env> {
   }
 
   private async runDueJobs(now: number): Promise<void> {
-    const jobs = this.sql
-      .exec<JobRow>(
-        'SELECT * FROM jobs WHERE run_at <= ? ORDER BY id LIMIT ?',
-        now,
-        JOBS_PER_ALARM,
-      )
-      .toArray();
-    for (const job of jobs) {
+    const due = this.db
+      .select()
+      .from(jobs)
+      .where(lte(jobs.runAt, now))
+      .orderBy(sql`${jobs.id} ASC`)
+      .limit(JOBS_PER_ALARM)
+      .all();
+    for (const job of due) {
       const outcome = await this.runJobSafely(job, now);
       if (outcome === 'done') {
-        this.sql.exec('DELETE FROM jobs WHERE id = ?', job.id);
+        this.db.delete(jobs).where(eq(jobs.id, job.id)).run();
       } else {
         const runAt = outcome === 'more' ? Date.now() : outcome.retryAt;
-        this.sql.exec('UPDATE jobs SET run_at = ? WHERE id = ?', runAt, job.id);
+        this.db.update(jobs).set({runAt}).where(eq(jobs.id, job.id)).run();
       }
     }
   }
@@ -1862,7 +1852,7 @@ export class UserHub extends DurableObject<Env> {
       console.error(
         JSON.stringify({
           msg: 'job failed',
-          userId: this.storedUserId,
+          userId: this.accountState?.userId,
           job: job.type,
           error: String(error),
         }),
@@ -1874,17 +1864,17 @@ export class UserHub extends DurableObject<Env> {
   private async runJob(job: JobRow): Promise<JobOutcome> {
     switch (job.type) {
       case 'cascade_list': {
-        const {listId, op} = JSON.parse(job.payload) as CascadeListJob;
+        const {listId, op} = job.payload as CascadeListJob;
         return this.cascadeListChange(listId, op);
       }
       case 'purge_blobs': {
-        const {taskId, blobs} = JSON.parse(job.payload) as PurgeBlobsJob;
+        const {taskId, blobs} = job.payload as PurgeBlobsJob;
         const task = await this.loadEntity(
-          entityKey(this.requireUserId(), 'task', taskId),
+          entityKey(this.requireAccount().userId, 'task', taskId),
         );
         if (task && !task.deletedAt) return 'done';
         for (const blob of blobs) {
-          await this.deleteBlob(blob.id, blob.size);
+          await this.deleteBlob(String(blob.id), blob.size);
         }
         return 'done';
       }
@@ -1898,15 +1888,15 @@ export class UserHub extends DurableObject<Env> {
     listId: string,
     op: 'delete' | 'restore',
   ): Promise<JobOutcome> {
-    const userId = this.requireUserId();
-    const list = await this.loadEntity(entityKey(userId, 'list', listId));
+    const state = this.requireAccount();
+    const list = await this.loadEntity(entityKey(state.userId, 'list', listId));
     const listDeleted = !list || Boolean(list.deletedAt);
     // The list changed state again since this job was queued; the newer job wins.
     if ((op === 'delete') !== listDeleted) return 'done';
     const overlay = this.fullJournalOverlay();
     const rows = await scanMetadata(
       this.env.DATA,
-      userId,
+      state.userId,
       'task',
       this.quotaCharger,
       overlay,
@@ -1929,7 +1919,7 @@ export class UserHub extends DurableObject<Env> {
         if (task.deletedAt) continue;
         const deleted = this.withDeletion(task, deletedVia);
         await this.persistEntity(deleted);
-        this.setLiveEntityCount(this.liveEntityCount - 1);
+        this.setLiveEntityCount(this.requireAccount().liveEntityCount - 1);
         this.onDeleted(deleted);
       } else {
         if (!task.deletedAt || task.deletedVia !== deletedVia) continue;
@@ -1939,7 +1929,7 @@ export class UserHub extends DurableObject<Env> {
           deletedVia: null,
         });
         await this.persistEntity(restored);
-        this.setLiveEntityCount(this.liveEntityCount + 1);
+        this.setLiveEntityCount(this.requireAccount().liveEntityCount + 1);
         this.onRestored(restored);
       }
     }
@@ -1948,18 +1938,20 @@ export class UserHub extends DurableObject<Env> {
 
   /** Drops expired journal rows, sessions, and old usage days, hourly. */
   private pruneExpiredState(now: number, force: boolean): void {
-    const prunedAt = Number(this.getState('pruned_at') ?? 0);
-    if (!force && now - prunedAt < PRUNE_INTERVAL_MS) return;
-    this.setState('pruned_at', String(now));
-    this.sql.exec(
-      'DELETE FROM journal WHERE written_at < ?',
-      now - JOURNAL_WINDOW_MS,
-    );
-    this.sql.exec('DELETE FROM sessions WHERE expires_at < ?', now);
+    const state = this.accountState;
+    if (!state) return;
+    if (!force && now - state.prunedAt < PRUNE_INTERVAL_MS) return;
+    state.prunedAt = now;
+    this.saveAccount();
+    this.db
+      .delete(journalEntries)
+      .where(lt(journalEntries.writtenAt, now - JOURNAL_WINDOW_MS))
+      .run();
+    this.db.delete(sessions).where(lt(sessions.expiresAt, now)).run();
     const oldestKeptDay = addDays(
       localDate(now, this.config.quotaTimeZone),
       -USAGE_HISTORY_DAYS,
     );
-    this.sql.exec('DELETE FROM usage WHERE day < ?', oldestKeptDay);
+    this.db.delete(usageDays).where(lt(usageDays.day, oldestKeptDay)).run();
   }
 }

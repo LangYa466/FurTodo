@@ -19,7 +19,10 @@
   // Per-IP limit on the unauthenticated login endpoints, counted per location.
   "ratelimits": [{ "name": "AUTH_LIMITER", "namespace_id": "4201", "simple": { "limit": 30, "period": 60 } }],
 
-  "rules": [{ "type": "Text", "globs": ["**/*.md"], "fallthrough": true }],
+  // Drizzle's generated migrations bundle imports each migration.sql as text.
+  "rules": [
+    { "type": "Text", "globs": ["**/*.md", "**/*.sql"], "fallthrough": true }
+  ],
 
   "observability": {
     "enabled": true,

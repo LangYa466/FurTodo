@@ -15,5 +15,12 @@
     "resolveJsonModule": true,
     "allowImportingTsExtensions": false
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "worker-configuration.d.ts", "vitest.config.ts"]
+  "include": [
+    "src/**/*.ts",
+    "test/**/*.ts",
+    "worker-configuration.d.ts",
+    "vitest.config.ts",
+    "drizzle.config.ts",
+    "drizzle/migrations.d.ts"
+  ]
 }
