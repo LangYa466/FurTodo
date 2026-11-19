@@ -221,12 +221,12 @@ describe('encryptPayload', () => {
       keys: {p256dh: base64UrlEncode(uaPublic), auth: base64UrlEncode(auth)},
     };
 
-    const plaintext = utf8Encoder.encode('去買牛奶 🥛 and stretch');
+    const plaintext = utf8Encoder.encode('去买牛奶 🥛 and stretch');
     const body = await encryptPayload(plaintext, target);
     expect(body.length).toBe(86 + plaintext.length + 1 + 16);
     await expect(
       decryptAsReceiver(body, pair.privateKey, uaPublic, auth),
-    ).resolves.toBe('去買牛奶 🥛 and stretch');
+    ).resolves.toBe('去买牛奶 🥛 and stretch');
   });
 
   it('produces a single record even for empty plaintext', async () => {

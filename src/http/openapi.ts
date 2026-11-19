@@ -16,13 +16,13 @@ export function jsonContent<T extends z.ZodType>(
 }
 
 const ERROR_DESCRIPTIONS = {
-  400: '請求格式錯誤（validation_error / bad_request）',
-  401: '未登入或 token 無效（invalid_token / session_expired）',
-  403: '不是組織成員或超過總量上限（not_org_member / org_access_restricted / limit_exceeded）',
-  404: '找不到（not_found）',
-  409: '狀態衝突（deleted / limit_exceeded）',
-  413: '檔案太大（payload_too_large）',
-  429: '超過每日配額或限流（quota_exceeded / rate_limited），看 Retry-After',
+  400: '请求格式错误（validation_error / bad_request）',
+  401: '未登录或 token 无效（invalid_token / session_expired）',
+  403: '不是组织成员或超过总量上限（not_org_member / org_access_restricted / limit_exceeded）',
+  404: '未找到（not_found）',
+  409: '状态冲突（deleted / limit_exceeded）',
+  413: '文件太大（payload_too_large）',
+  429: '超过每日配额或限流（quota_exceeded / rate_limited），见 Retry-After',
 } as const;
 
 export type ErrorStatus = keyof typeof ERROR_DESCRIPTIONS;

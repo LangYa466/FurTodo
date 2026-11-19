@@ -12,15 +12,15 @@ export function registerPushRoutes(app: OpenAPIHono<AppEnv>): void {
       path: '/v1/push/vapid-public-key',
       tags: ['Push'],
       summary:
-        'Web Push VAPID 公鑰（PushManager.subscribe 的 applicationServerKey）',
+        'Web Push VAPID 公钥（PushManager.subscribe 的 applicationServerKey）',
       responses: {
         200: jsonContent(
           z.object({
             publicKey: z
               .string()
-              .openapi({description: 'base64url，65 bytes 未壓縮 P-256 公鑰'}),
+              .openapi({description: 'base64url，65 bytes 未压缩 P-256 公钥'}),
           }),
-          '公鑰',
+          '公钥',
         ),
       },
     }),
@@ -32,9 +32,9 @@ export function registerPushRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'post',
       path: '/v1/push/subscriptions',
       tags: ['Push'],
-      summary: '登記 Web Push 訂閱（PushSubscription.toJSON() 的內容）',
+      summary: '登记 Web Push 订阅（PushSubscription.toJSON() 的内容）',
       description:
-        '提醒時間到時，伺服器會推送 JSON：{ type: "reminder", taskId, reminderId, title, dueDate, dueTime, at }。同一 endpoint 重送會覆蓋。',
+        '提醒时间到达时，服务器会推送 JSON：{ type: "reminder", taskId, reminderId, title, dueDate, dueTime, at }。同一 endpoint 重发会覆盖。',
       security: BEARER_SECURITY,
       request: {
         body: {
@@ -51,12 +51,12 @@ export function registerPushRoutes(app: OpenAPIHono<AppEnv>): void {
                   .max(64)
                   .nullable()
                   .optional()
-                  .openapi({description: '裝置名稱，方便辨識'}),
+                  .openapi({description: '设备名称，方便识别'}),
                 expirationTime: z
                   .number()
                   .nullable()
                   .optional()
-                  .openapi({description: '瀏覽器給的欄位，會被忽略'}),
+                  .openapi({description: '浏览器提供的字段，会被忽略'}),
               }),
             },
           },
@@ -64,7 +64,7 @@ export function registerPushRoutes(app: OpenAPIHono<AppEnv>): void {
         },
       },
       responses: {
-        200: jsonContent(z.object({subscriptions: z.int()}), '目前訂閱數'),
+        200: jsonContent(z.object({subscriptions: z.int()}), '当前订阅数'),
         ...errorResponses(400, 401, 403, 409, 429),
       },
     }),
@@ -85,13 +85,13 @@ export function registerPushRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'delete',
       path: '/v1/push/subscriptions',
       tags: ['Push'],
-      summary: '取消 Web Push 訂閱',
+      summary: '取消 Web Push 订阅',
       security: BEARER_SECURITY,
       request: {
         query: z.object({endpoint: z.string().max(MAX_ENDPOINT_LENGTH)}),
       },
       responses: {
-        200: jsonContent(z.object({removed: z.boolean()}), '結果'),
+        200: jsonContent(z.object({removed: z.boolean()}), '结果'),
         ...errorResponses(401, 403, 429),
       },
     }),
@@ -110,7 +110,7 @@ export function registerPushRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'post',
       path: '/v1/push/test',
       tags: ['Push'],
-      summary: '送一則測試推播到所有已訂閱裝置',
+      summary: '向所有已订阅设备发送一条测试推送',
       security: BEARER_SECURITY,
       responses: {
         200: jsonContent(
@@ -124,7 +124,7 @@ export function registerPushRoutes(app: OpenAPIHono<AppEnv>): void {
               }),
             ),
           }),
-          '各推播服務的回應',
+          '各推送服务的响应',
         ),
         ...errorResponses(401, 403, 404, 429),
       },

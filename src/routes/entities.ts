@@ -119,7 +119,7 @@ const SIMPLE_KINDS: SimpleKindSpec[] = [
     kind: 'list',
     plural: 'lists',
     tag: 'Lists',
-    label: '清單（專案/領域）',
+    label: '清单（项目/领域）',
     createSchema: listCreateSchema,
     patchSchema: listPatchSchema,
     entitySchema: listEntitySchema,
@@ -128,7 +128,7 @@ const SIMPLE_KINDS: SimpleKindSpec[] = [
     kind: 'folder',
     plural: 'folders',
     tag: 'Folders',
-    label: '資料夾（清單分組）',
+    label: '文件夹（清单分组）',
     createSchema: folderCreateSchema,
     patchSchema: folderPatchSchema,
     entitySchema: folderEntitySchema,
@@ -137,7 +137,7 @@ const SIMPLE_KINDS: SimpleKindSpec[] = [
     kind: 'tag',
     plural: 'tags',
     tag: 'Tags',
-    label: '情境標籤',
+    label: '情境标签',
     createSchema: tagCreateSchema,
     patchSchema: tagPatchSchema,
     entitySchema: tagEntitySchema,
@@ -173,7 +173,7 @@ function registerSimpleKind(
       responses: {
         200: jsonContent(
           z.object({items: z.array(spec.entitySchema)}),
-          '未刪除的項目',
+          '未删除的条目',
         ),
         ...errorResponses(401, 403, 429),
       },
@@ -192,8 +192,8 @@ function registerSimpleKind(
       method: 'post',
       path: basePath,
       tags,
-      summary: `建立${spec.label}`,
-      description: '可自帶 id（離線建立後同步）；同 id 重送是冪等的。',
+      summary: `创建${spec.label}`,
+      description: '可自带 id（离线创建后同步）；同 id 重发是幂等的。',
       security: BEARER_SECURITY,
       request: {
         body: {
@@ -202,7 +202,7 @@ function registerSimpleKind(
         },
       },
       responses: {
-        201: jsonContent(spec.entitySchema, '已建立'),
+        201: jsonContent(spec.entitySchema, '已创建'),
         ...errorResponses(400, 401, 403, 429),
       },
     }),
@@ -255,11 +255,11 @@ function registerItemRoutes(
       method: 'get',
       path: `${basePath}/{id}`,
       tags,
-      summary: `取得單一${label}（含垃圾桶中的，deletedAt 非 null）`,
+      summary: `获取单个${label}（含回收站中的，deletedAt 非 null）`,
       security: BEARER_SECURITY,
       request: {params: idParamSchema},
       responses: {
-        200: jsonContent(entitySchema, '實體'),
+        200: jsonContent(entitySchema, '实体'),
         ...errorResponses(401, 403, 404, 429),
       },
     }),
@@ -280,7 +280,7 @@ function registerItemRoutes(
       path: `${basePath}/{id}`,
       tags,
       summary: `部分更新${label}`,
-      description: '只送要改的欄位。欄位層級 Last-Writer-Wins。',
+      description: '只传要改的字段。字段级 Last-Writer-Wins。',
       security: BEARER_SECURITY,
       request: {
         params: idParamSchema,
@@ -290,7 +290,7 @@ function registerItemRoutes(
         },
       },
       responses: {
-        200: jsonContent(entitySchema, '更新後的實體'),
+        200: jsonContent(entitySchema, '更新后的实体'),
         ...errorResponses(400, 401, 403, 404, 409, 429),
       },
     }),
@@ -311,15 +311,15 @@ function registerItemRoutes(
       method: 'delete',
       path: `${basePath}/{id}`,
       tags,
-      summary: `刪除${label}（移到垃圾桶，30 天內可還原）`,
+      summary: `删除${label}（移到回收站，30 天内可恢复）`,
       description:
         kind === 'list'
-          ? '清單內的任務會一併移到垃圾桶（背景處理）；還原清單時一起還原。'
+          ? '清单内的任务会一并移到回收站（后台处理）；恢复清单时一起恢复。'
           : undefined,
       security: BEARER_SECURITY,
       request: {params: idParamSchema},
       responses: {
-        200: jsonContent(entitySchema, '刪除後的實體（deletedAt 已設定）'),
+        200: jsonContent(entitySchema, '删除后的实体（deletedAt 已设置）'),
         ...errorResponses(401, 403, 404, 429),
       },
     }),
@@ -338,11 +338,11 @@ function registerItemRoutes(
       method: 'post',
       path: `${basePath}/{id}/restore`,
       tags,
-      summary: `從垃圾桶還原${label}`,
+      summary: `从回收站恢复${label}`,
       security: BEARER_SECURITY,
       request: {params: idParamSchema},
       responses: {
-        200: jsonContent(entitySchema, '還原後的實體'),
+        200: jsonContent(entitySchema, '恢复后的实体'),
         ...errorResponses(401, 403, 404, 429),
       },
     }),
@@ -359,17 +359,17 @@ function registerItemRoutes(
 
 const taskQuerySchema = z.object({
   status: z.enum(['open', 'completed', 'all']).default('open'),
-  listId: idSchema.optional().openapi({description: '只看某清單'}),
+  listId: idSchema.optional().openapi({description: '只看某个清单'}),
   inbox: z
     .enum(['true', 'false'])
     .optional()
-    .openapi({description: 'true = 只看收件匣（沒有清單）'}),
+    .openapi({description: 'true = 只看收件箱（没有清单）'}),
   tagId: idSchema.optional(),
   q: z
     .string()
     .max(200)
     .optional()
-    .openapi({description: '標題/備註關鍵字（不分大小寫）'}),
+    .openapi({description: '标题/备注关键字（不区分大小写）'}),
   dueFrom: dateSchema.optional(),
   dueTo: dateSchema.optional(),
   priority: z.coerce.number().int().min(0).max(3).optional(),
@@ -381,7 +381,7 @@ const taskQuerySchema = z.object({
     .min(1)
     .max(1440)
     .optional()
-    .openapi({description: '預估分鐘數 <= N（找零碎時間能做的事）'}),
+    .openapi({description: '预估分钟数 <= N（寻找零碎时间能做的事）'}),
   myDay: dateSchema.optional(),
   includeDeleted: z.enum(['true', 'false']).optional(),
   limit: z.coerce
@@ -394,7 +394,7 @@ const taskQuerySchema = z.object({
 
 const completeResponseSchema = z.object({
   task: taskEntitySchema,
-  spawned: z.array(taskEntitySchema).openapi({description: '重複任務的下一期'}),
+  spawned: z.array(taskEntitySchema).openapi({description: '重复任务的下一期'}),
 });
 
 export function registerEntityRoutes(app: OpenAPIHono<AppEnv>): void {
@@ -403,18 +403,18 @@ export function registerEntityRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'get',
       path: '/v1/tasks',
       tags: ['Tasks'],
-      summary: '查詢任務',
+      summary: '查询任务',
       description:
-        '未完成依 sortOrder 排序，已完成依 completedAt 新到舊。離線優先的客戶端建議改用 /v1/sync/pull 同步全部資料後在本地查詢。',
+        '未完成的按 sortOrder 排序，已完成的按 completedAt 从新到旧。离线优先的客户端建议改用 /v1/sync/pull 同步全部数据后在本地查询。',
       security: BEARER_SECURITY,
       request: {query: taskQuerySchema},
       responses: {
         200: jsonContent(
           z.object({
             items: z.array(taskEntitySchema),
-            truncated: z.boolean().openapi({description: '超過 limit 被截斷'}),
+            truncated: z.boolean().openapi({description: '超过 limit 被截断'}),
           }),
-          '任務清單',
+          '任务清单',
         ),
         ...errorResponses(400, 401, 403, 429),
       },
@@ -476,9 +476,9 @@ export function registerEntityRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'post',
       path: '/v1/tasks',
       tags: ['Tasks'],
-      summary: '建立任務',
+      summary: '创建任务',
       description:
-        '可自帶 id（建議 UUIDv7）；同 id 重送是冪等的。設定 recurrence 但沒有 dueDate 時，伺服器會填入第一個符合的日期。',
+        '可自带 id（建议 UUIDv7）；同 id 重发是幂等的。设置 recurrence 但没有 dueDate 时，服务器会填入第一个符合的日期。',
       security: BEARER_SECURITY,
       request: {
         body: {
@@ -487,7 +487,7 @@ export function registerEntityRoutes(app: OpenAPIHono<AppEnv>): void {
         },
       },
       responses: {
-        201: jsonContent(taskEntitySchema, '已建立'),
+        201: jsonContent(taskEntitySchema, '已创建'),
         ...errorResponses(400, 401, 403, 429),
       },
     }),
@@ -499,7 +499,7 @@ export function registerEntityRoutes(app: OpenAPIHono<AppEnv>): void {
         id: id ?? uuidV7(),
         data: parsePatchOrThrow('task', fields),
       });
-      return c.json(requireEntity(outcome.entity, '任務'), 201);
+      return c.json(requireEntity(outcome.entity, '任务'), 201);
     },
   );
 
@@ -507,7 +507,7 @@ export function registerEntityRoutes(app: OpenAPIHono<AppEnv>): void {
     kind: 'task',
     basePath: '/v1/tasks',
     tags: ['Tasks'],
-    label: '任務',
+    label: '任务',
     patchSchema: taskPatchSchema,
     entitySchema: taskEntitySchema,
   });
@@ -517,11 +517,11 @@ export function registerEntityRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'post',
       path: '/v1/tasks/{id}/complete',
       tags: ['Tasks'],
-      summary: '完成任務（重複任務會產生下一期）',
+      summary: '完成任务（重复任务会生成下一期）',
       security: BEARER_SECURITY,
       request: {params: idParamSchema},
       responses: {
-        200: jsonContent(completeResponseSchema, '完成後的任務'),
+        200: jsonContent(completeResponseSchema, '完成后的任务'),
         ...errorResponses(401, 403, 404, 409, 429),
       },
     }),
@@ -534,7 +534,7 @@ export function registerEntityRoutes(app: OpenAPIHono<AppEnv>): void {
         mustExist: true,
       });
       return c.json(
-        {task: requireEntity(outcome.entity, '任務'), spawned: outcome.spawned},
+        {task: requireEntity(outcome.entity, '任务'), spawned: outcome.spawned},
         200,
       );
     },
@@ -549,7 +549,7 @@ export function registerEntityRoutes(app: OpenAPIHono<AppEnv>): void {
       security: BEARER_SECURITY,
       request: {params: idParamSchema},
       responses: {
-        200: jsonContent(taskEntitySchema, '任務'),
+        200: jsonContent(taskEntitySchema, '任务'),
         ...errorResponses(401, 403, 404, 409, 429),
       },
     }),
@@ -561,7 +561,7 @@ export function registerEntityRoutes(app: OpenAPIHono<AppEnv>): void {
         data: {completedAt: null},
         mustExist: true,
       });
-      return c.json(requireEntity(outcome.entity, '任務'), 200);
+      return c.json(requireEntity(outcome.entity, '任务'), 200);
     },
   );
 
@@ -574,12 +574,12 @@ export function registerEntityRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'get',
       path: '/v1/trash',
       tags: ['Tasks'],
-      summary: '垃圾桶（30 天內刪除的任務、清單、資料夾、標籤）',
+      summary: '回收站（30 天内删除的任务、清单、文件夹、标签）',
       security: BEARER_SECURITY,
       responses: {
         200: jsonContent(
           z.object({items: z.array(changeSchema)}),
-          '依刪除時間新到舊',
+          '按删除时间从新到旧',
         ),
         ...errorResponses(401, 403, 429),
       },

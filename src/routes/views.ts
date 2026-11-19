@@ -29,25 +29,24 @@ const todayViewSchema = z
     date: dateSchema,
     focus: tasksSchema.openapi({
       description:
-        '今天最關鍵的 1-3 件事（從 myDay/overdue/dueToday 依四象限、優先級、到期日計分）',
+        '今天最关键的 1-3 件事（从 myDay/overdue/dueToday 按四象限、优先级、到期日计分）',
     }),
     myDay: tasksSchema.openapi({
-      description:
-        '使用者挑進「我的一天」的任務（myDay = date），依 myDayOrder',
+      description: '用户选入“我的一天”的任务（myDay = date），按 myDayOrder',
     }),
     overdue: tasksSchema.openapi({
-      description: '逾期未完成（settings.todayIncludesOverdue = false 時為空）',
+      description: '逾期未完成（settings.todayIncludesOverdue = false 时为空）',
     }),
     dueToday: tasksSchema.openapi({description: '今天到期、尚未加入 My Day'}),
     suggestions: tasksSchema.openapi({
       description:
-        '建議加入 My Day：昨天沒做完的 My Day、3 天內到期、高優先、重要象限',
+        '建议加入 My Day：昨天没做完的 My Day、3 天内到期、高优先级、重要象限',
     }),
-    completed: tasksSchema.openapi({description: '今天完成的任務'}),
+    completed: tasksSchema.openapi({description: '今天完成的任务'}),
     stats: z.object({
       open: z.int(),
       completed: z.int(),
-      plannedMinutes: z.int().openapi({description: '待辦任務預估分鐘數總和'}),
+      plannedMinutes: z.int().openapi({description: '待办任务预估分钟数总和'}),
     }),
   })
   .openapi('TodayView');
@@ -63,12 +62,12 @@ const upcomingViewSchema = z
 
 const matrixViewSchema = z
   .object({
-    q1: tasksSchema.openapi({description: '重要且緊急：馬上做'}),
-    q2: tasksSchema.openapi({description: '重要不緊急：排時間做'}),
-    q3: tasksSchema.openapi({description: '緊急不重要：委派或快速處理'}),
-    q4: tasksSchema.openapi({description: '不重要不緊急：刪掉或之後再說'}),
+    q1: tasksSchema.openapi({description: '重要且紧急：马上做'}),
+    q2: tasksSchema.openapi({description: '重要不紧急：安排时间做'}),
+    q3: tasksSchema.openapi({description: '紧急不重要：委派或快速处理'}),
+    q4: tasksSchema.openapi({description: '不重要不紧急：删掉或以后再说'}),
     unclassified: tasksSchema.openapi({
-      description: `尚未分類的未完成任務（最多 ${MATRIX_UNCLASSIFIED_LIMIT} 筆）`,
+      description: `尚未分类的未完成任务（最多 ${MATRIX_UNCLASSIFIED_LIMIT} 条）`,
     }),
   })
   .openapi('MatrixView');
@@ -117,17 +116,17 @@ export function registerViewRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'get',
       path: '/v1/views/today',
       tags: ['Views'],
-      summary: '今日視圖（My Day）',
+      summary: '今日视图（My Day）',
       security: BEARER_SECURITY,
       request: {
         query: z.object({
           date: dateSchema.optional().openapi({
-            description: '預設為使用者時區的今天',
+            description: '默认为用户时区的今天',
           }),
         }),
       },
       responses: {
-        200: jsonContent(todayViewSchema, '今日視圖'),
+        200: jsonContent(todayViewSchema, '今日视图'),
         ...errorResponses(400, 401, 403, 429),
       },
     }),
@@ -165,11 +164,11 @@ export function registerViewRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'get',
       path: '/v1/views/upcoming',
       tags: ['Views'],
-      summary: '即將到來（依到期日分組）',
+      summary: '即将到来（按到期日分组）',
       security: BEARER_SECURITY,
       request: {
         query: z.object({
-          from: dateSchema.optional().openapi({description: '預設今天'}),
+          from: dateSchema.optional().openapi({description: '默认为今天'}),
           days: z.coerce
             .number()
             .int()
@@ -179,7 +178,7 @@ export function registerViewRoutes(app: OpenAPIHono<AppEnv>): void {
         }),
       },
       responses: {
-        200: jsonContent(upcomingViewSchema, '即將到來'),
+        200: jsonContent(upcomingViewSchema, '即将到来'),
         ...errorResponses(400, 401, 403, 429),
       },
     }),
@@ -213,7 +212,7 @@ export function registerViewRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'get',
       path: '/v1/views/matrix',
       tags: ['Views'],
-      summary: '四象限（艾森豪矩陣）',
+      summary: '四象限（艾森豪威尔矩阵）',
       security: BEARER_SECURITY,
       responses: {
         200: jsonContent(matrixViewSchema, '四象限'),

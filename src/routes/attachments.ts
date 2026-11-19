@@ -75,7 +75,7 @@ async function readUpload(
   if (contentType.startsWith('multipart/form-data')) {
     const file = (await c.req.formData()).get('file');
     if (!(file instanceof File)) {
-      throw new AppError(400, 'bad_request', 'multipart 需要 file 欄位');
+      throw new AppError(400, 'bad_request', 'multipart 需要 file 字段');
     }
     return {
       name: file.name || 'file',
@@ -84,7 +84,7 @@ async function readUpload(
     };
   }
   if (!rawName) {
-    throw new AppError(400, 'bad_request', 'raw body 上傳需要 ?name=檔名');
+    throw new AppError(400, 'bad_request', 'raw body 上传需要 ?name=文件名');
   }
   return {
     name: rawName,
@@ -101,9 +101,9 @@ export function registerAttachmentRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'post',
       path: '/v1/tasks/{id}/attachments',
       tags: ['Attachments'],
-      summary: '上傳附件',
+      summary: '上传附件',
       description:
-        '兩種方式：(1) multipart/form-data，欄位名 file；(2) 直接把檔案當 body，Content-Type 為檔案類型並帶 ?name=檔名。單檔上限與總容量見 /v1/usage。',
+        '两种方式：(1) multipart/form-data，字段名为 file；(2) 直接把文件作为 body，Content-Type 为文件类型并带 ?name=文件名。单个文件上限与总容量见 /v1/usage。',
       security: BEARER_SECURITY,
       request: {
         params: z.object({id: idSchema}),
@@ -112,13 +112,13 @@ export function registerAttachmentRoutes(app: OpenAPIHono<AppEnv>): void {
             .string()
             .max(MAX_FILE_NAME_LENGTH)
             .optional()
-            .openapi({description: 'raw body 上傳時的檔名'}),
+            .openapi({description: 'raw body 上传时的文件名'}),
         }),
       },
       responses: {
         201: jsonContent(
           z.object({attachment: attachmentSchema, task: taskEntitySchema}),
-          '已上傳',
+          '已上传',
         ),
         ...errorResponses(400, 401, 403, 404, 409, 413, 429),
       },
@@ -130,7 +130,7 @@ export function registerAttachmentRoutes(app: OpenAPIHono<AppEnv>): void {
         throw new AppError(
           413,
           'payload_too_large',
-          `單檔上限 ${maxFileBytes} bytes`,
+          `单个文件上限 ${maxFileBytes} bytes`,
         );
       }
       const upload = await readUpload(c, c.req.valid('query').name);
@@ -151,11 +151,11 @@ export function registerAttachmentRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'delete',
       path: '/v1/tasks/{id}/attachments/{attachmentId}',
       tags: ['Attachments'],
-      summary: '刪除附件',
+      summary: '删除附件',
       security: BEARER_SECURITY,
       request: {params: z.object({id: idSchema, attachmentId: idSchema})},
       responses: {
-        200: jsonContent(z.object({task: taskEntitySchema}), '刪除後的任務'),
+        200: jsonContent(z.object({task: taskEntitySchema}), '删除后的任务'),
         ...errorResponses(401, 403, 404, 429),
       },
     }),
@@ -174,14 +174,14 @@ export function registerAttachmentRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'get',
       path: '/v1/attachments/{attachmentId}',
       tags: ['Attachments'],
-      summary: '下載附件（需 Bearer）',
+      summary: '下载附件（需要 Bearer）',
       security: BEARER_SECURITY,
       request: {
         params: attachmentParamSchema,
         query: z.object({download: z.enum(['1', '0']).optional()}),
       },
       responses: {
-        200: {description: '檔案內容（圖片/PDF/文字/影音以 inline 回傳）'},
+        200: {description: '文件内容（图片/PDF/文本/音视频以内联方式返回）'},
         ...errorResponses(401, 403, 404, 429),
       },
     }),
@@ -205,13 +205,13 @@ export function registerAttachmentRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'get',
       path: '/v1/attachments/{attachmentId}/url',
       tags: ['Attachments'],
-      summary: '取得 1 小時有效的簽章網址（可直接放進 <img src>）',
+      summary: '获取 1 小时有效的签名链接（可直接放进 <img src>）',
       security: BEARER_SECURITY,
       request: {params: attachmentParamSchema},
       responses: {
         200: jsonContent(
           z.object({url: z.string(), expiresAt: z.string()}),
-          '簽章網址',
+          '签名链接',
         ),
         ...errorResponses(401, 403, 429),
       },
@@ -249,7 +249,7 @@ export function registerAttachmentRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'get',
       path: '/v1/files/{userId}/{attachmentId}',
       tags: ['Attachments'],
-      summary: '以簽章網址下載附件（不需 Bearer）',
+      summary: '用签名链接下载附件（无需 Bearer）',
       request: {
         params: z.object({
           userId: z.string().regex(USER_ID_RE),
@@ -262,7 +262,7 @@ export function registerAttachmentRoutes(app: OpenAPIHono<AppEnv>): void {
         }),
       },
       responses: {
-        200: {description: '檔案內容'},
+        200: {description: '文件内容'},
         ...errorResponses(403, 404, 429),
       },
     }),
@@ -280,7 +280,7 @@ export function registerAttachmentRoutes(app: OpenAPIHono<AppEnv>): void {
           query.sig,
         ))
       ) {
-        throw new AppError(403, 'forbidden', '簽章網址無效或已過期');
+        throw new AppError(403, 'forbidden', '签名链接无效或已过期');
       }
       unwrap(await hubFor(c.env, userId).chargeSignedFileRead());
       return serveBlob(c, userId, attachmentId, query.download === '1');

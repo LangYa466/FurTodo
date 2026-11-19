@@ -3,23 +3,23 @@ import {type CaptureContext, parseCapture} from '../../src/lib/capture';
 
 const NOW = Date.parse('2026-11-19T10:00:00+08:00'); // 2026-11-19 is a Thursday
 
-const ctx: CaptureContext = {now: NOW, timeZone: 'Asia/Taipei', weekStart: 1};
+const ctx: CaptureContext = {now: NOW, timeZone: 'Asia/Shanghai', weekStart: 1};
 const sundayCtx: CaptureContext = {
   now: NOW,
-  timeZone: 'Asia/Taipei',
+  timeZone: 'Asia/Shanghai',
   weekStart: 0,
 };
 
 describe('parseCapture — general', () => {
   it('parses a complete Chinese example', () => {
     const parsed = parseCapture(
-      '明天下午3點 打電話給王先生確認報價 #電腦前 @工作 !高 ~15m',
+      '明天下午3点 打电话给王先生确认报价 #电脑前 @工作 !高 ~15m',
       ctx,
     );
-    expect(parsed.title).toBe('打電話給王先生確認報價');
+    expect(parsed.title).toBe('打电话给王先生确认报价');
     expect(parsed.dueDate).toBe('2026-11-20');
     expect(parsed.dueTime).toBe('15:00');
-    expect(parsed.tags).toEqual(['電腦前']);
+    expect(parsed.tags).toEqual(['电脑前']);
     expect(parsed.list).toBe('工作');
     expect(parsed.priority).toBe(3);
     expect(parsed.estimateMinutes).toBe(15);
@@ -27,15 +27,15 @@ describe('parseCapture — general', () => {
   });
 
   it('deduplicates tags, keeping the first spelling', () => {
-    const parsed = parseCapture('買牛奶 #外出辦事 #外出辦事', ctx);
-    expect(parsed.tags).toEqual(['外出辦事']);
-    expect(parsed.title).toBe('買牛奶');
+    const parsed = parseCapture('买牛奶 #外出办事 #外出办事', ctx);
+    expect(parsed.tags).toEqual(['外出办事']);
+    expect(parsed.title).toBe('买牛奶');
     expect(parsed.warnings).toEqual([]);
   });
 
   it('weekly Friday with estimate and energy, no dueDate inferred', () => {
-    const parsed = parseCapture('寫週報 *每週五 ~1h %低', ctx);
-    expect(parsed.title).toBe('寫週報');
+    const parsed = parseCapture('写周报 *每周五 ~1h %低', ctx);
+    expect(parsed.title).toBe('写周报');
     expect(parsed.recurrence).toEqual({
       freq: 'weekly',
       interval: 1,
@@ -55,15 +55,15 @@ describe('parseCapture — general', () => {
 
 describe('parseCapture — dates', () => {
   const cases: Array<[string, string | null]> = [
-    ['下週一 開會', '2026-11-23'],
-    ['週四 交報告', '2026-11-19'],
-    ['週三 X', '2026-11-25'],
-    ['11月30日 繳費', '2026-11-30'],
-    ['3號 繳房租', '2026-12-03'],
-    ['月底 結帳', '2026-11-30'],
-    ['2026-12-25 聖誕節', '2026-12-25'],
+    ['下周一 开会', '2026-11-23'],
+    ['周四 交报告', '2026-11-19'],
+    ['周三 X', '2026-11-25'],
+    ['11月30日 缴费', '2026-11-30'],
+    ['3号 缴房租', '2026-12-03'],
+    ['月底 结账', '2026-11-30'],
+    ['2026-12-25 圣诞节', '2026-12-25'],
     ['12/25 party', '2026-12-25'],
-    ['3天後 回診', '2026-11-22'],
+    ['3天后 回诊', '2026-11-22'],
   ];
 
   it.each(cases)('%s → %s', (input, expected) => {
@@ -71,8 +71,8 @@ describe('parseCapture — dates', () => {
   });
 
   it('next Sunday when weekStart is 0', () => {
-    expect(parseCapture('下週日 聚會', ctx).dueDate).toBe('2026-11-29');
-    expect(parseCapture('下週日 聚會', sundayCtx).dueDate).toBe('2026-11-22');
+    expect(parseCapture('下周日 聚会', ctx).dueDate).toBe('2026-11-29');
+    expect(parseCapture('下周日 聚会', sundayCtx).dueDate).toBe('2026-11-22');
   });
 
   it('leaves dueDate null without a date, even with recurrence', () => {
@@ -82,16 +82,16 @@ describe('parseCapture — dates', () => {
   });
 
   it('keeps the second date in the title and warns', () => {
-    const parsed = parseCapture('明天 開會 後天', ctx);
+    const parsed = parseCapture('明天 开会 后天', ctx);
     expect(parsed.dueDate).toBe('2026-11-20');
-    expect(parsed.title).toBe('開會 後天');
+    expect(parsed.title).toBe('开会 后天');
     expect(parsed.warnings).toContain('duplicate_date');
   });
 
   it('keeps an invalid date in the title and warns', () => {
-    const parsed = parseCapture('2026-02-31 報帳', ctx);
+    const parsed = parseCapture('2026-02-31 报账', ctx);
     expect(parsed.dueDate).toBeNull();
-    expect(parsed.title).toBe('2026-02-31 報帳');
+    expect(parsed.title).toBe('2026-02-31 报账');
     expect(parsed.warnings).toContain('invalid_date');
   });
 });
@@ -158,17 +158,17 @@ describe('parseCapture — recurrence rules', () => {
       {freq: 'weekly', interval: 1, byWeekday: [1, 2, 3, 4, 5], basis: 'due'},
     ],
     [
-      '*每2週一三',
+      '*每2周一三',
       {freq: 'weekly', interval: 2, byWeekday: [1, 3], basis: 'due'},
     ],
-    ['*每月15號', {freq: 'monthly', interval: 1, byMonthDay: 15, basis: 'due'}],
+    ['*每月15号', {freq: 'monthly', interval: 1, byMonthDay: 15, basis: 'due'}],
     [
-      '*每月最後一天',
+      '*每月最后一天',
       {freq: 'monthly', interval: 1, byMonthDay: -1, basis: 'due'},
     ],
     ['*每年', {freq: 'yearly', interval: 1, basis: 'due'}],
-    ['*完成後2週', {freq: 'weekly', interval: 2, basis: 'completion'}],
-    ['*每十二個月', {freq: 'monthly', interval: 12, basis: 'due'}],
+    ['*完成后2周', {freq: 'weekly', interval: 2, basis: 'completion'}],
+    ['*每十二个月', {freq: 'monthly', interval: 12, basis: 'due'}],
     [
       '*每周二、四',
       {freq: 'weekly', interval: 1, byWeekday: [2, 4], basis: 'due'},
@@ -193,21 +193,21 @@ describe('parseCapture — recurrence rules', () => {
   });
 
   it('keeps an unknown rule in the title and warns', () => {
-    const parsed = parseCapture('亂寫 *whenever', ctx);
+    const parsed = parseCapture('乱写 *whenever', ctx);
     expect(parsed.recurrence).toBeNull();
-    expect(parsed.title).toBe('亂寫 *whenever');
+    expect(parsed.title).toBe('乱写 *whenever');
     expect(parsed.warnings).toContain('unknown_recurrence');
   });
 });
 
 describe('parseCapture — times', () => {
   const cases: Array<[string, string]> = [
-    ['晚上8點15分 煮飯', '20:15'],
-    ['下午三點半 開會', '15:30'],
-    ['中午12點 吃飯', '12:00'],
-    ['凌晨12點 睡覺', '00:00'],
-    ['12am 睡覺', '00:00'],
-    ['noon 吃飯', '12:00'],
+    ['晚上8点15分 煮饭', '20:15'],
+    ['下午三点半 开会', '15:30'],
+    ['中午12点 吃饭', '12:00'],
+    ['凌晨12点 睡觉', '00:00'],
+    ['12am 睡觉', '00:00'],
+    ['noon 吃饭', '12:00'],
   ];
 
   it.each(cases)('%s', (input, time) => {
@@ -215,8 +215,8 @@ describe('parseCapture — times', () => {
   });
 
   it('tonight defaults to 20:00 today', () => {
-    const parsed = parseCapture('今晚 吃藥', ctx);
-    expect(parsed.title).toBe('吃藥');
+    const parsed = parseCapture('今晚 吃药', ctx);
+    expect(parsed.title).toBe('吃药');
     expect(parsed.dueDate).toBe('2026-11-19');
     expect(parsed.dueTime).toBe('20:00');
   });
@@ -229,12 +229,12 @@ describe('parseCapture — times', () => {
   });
 
   it('rolls a time equal to now to the next day', () => {
-    expect(parseCapture('10:00 站會', ctx).dueDate).toBe('2026-11-20');
-    expect(parseCapture('10:01 站會', ctx).dueDate).toBe('2026-11-19');
+    expect(parseCapture('10:00 站会', ctx).dueDate).toBe('2026-11-20');
+    expect(parseCapture('10:01 站会', ctx).dueDate).toBe('2026-11-19');
   });
 
   it('duplicate times: the second stays in the title', () => {
-    const parsed = parseCapture('9點 先做 15:00 再檢查', ctx);
+    const parsed = parseCapture('9点 先做 15:00 再检查', ctx);
     expect(parsed.dueTime).toBe('09:00');
     expect(parsed.title).toContain('15:00');
     expect(parsed.warnings).toContain('duplicate_time');
@@ -243,15 +243,15 @@ describe('parseCapture — times', () => {
 
 describe('parseCapture — edge cases', () => {
   it('a mid-word exclamation mark is not a token', () => {
-    const parsed = parseCapture('買牛奶!', ctx);
+    const parsed = parseCapture('买牛奶!', ctx);
     expect(parsed.priority).toBeNull();
-    expect(parsed.title).toBe('買牛奶!');
+    expect(parsed.title).toBe('买牛奶!');
   });
 
   it('a mid-word hash is not a tag', () => {
-    const parsed = parseCapture('C#語言 練習', ctx);
+    const parsed = parseCapture('C#语言 练习', ctx);
     expect(parsed.tags).toEqual([]);
-    expect(parsed.title).toBe('C#語言 練習');
+    expect(parsed.title).toBe('C#语言 练习');
   });
 
   it('keeps an invalid estimate in the title', () => {
@@ -268,14 +268,14 @@ describe('parseCapture — edge cases', () => {
   });
 
   it('full-width markers', () => {
-    const parsed = parseCapture('＃標籤 買東西 ！高', ctx);
-    expect(parsed.tags).toEqual(['標籤']);
+    const parsed = parseCapture('＃标签 买东西 ！高', ctx);
+    expect(parsed.tags).toEqual(['标签']);
     expect(parsed.priority).toBe(3);
-    expect(parsed.title).toBe('買東西');
+    expect(parsed.title).toBe('买东西');
   });
 
   it('tokens are position-sorted input slices', () => {
-    const input = '明天 #工作 !2 下午3點 ~30m @家';
+    const input = '明天 #工作 !2 下午3点 ~30m @家';
     const parsed = parseCapture(input, ctx);
     const starts = parsed.tokens.map(token => token.start);
     expect(starts).toEqual([...starts].sort((a, b) => a - b));
@@ -293,10 +293,10 @@ describe('parseCapture — edge cases', () => {
   });
 
   it('duplicate list and duplicate priority', () => {
-    const parsed = parseCapture('@家 掃地 @公司 !高 !low', ctx);
+    const parsed = parseCapture('@家 扫地 @公司 !高 !low', ctx);
     expect(parsed.list).toBe('家');
     expect(parsed.priority).toBe(3);
-    expect(parsed.title).toBe('掃地');
+    expect(parsed.title).toBe('扫地');
     expect(parsed.warnings).toContain('duplicate_list:@公司');
     expect(parsed.warnings).toContain('duplicate_priority');
   });
@@ -309,8 +309,8 @@ describe('parseCapture — edge cases', () => {
   });
 
   it('collapses whitespace and trims separators', () => {
-    const parsed = parseCapture('  ，  買  牛奶  #家 ，', ctx);
-    expect(parsed.title).toBe('買 牛奶');
+    const parsed = parseCapture('  ，  买  牛奶  #家 ，', ctx);
+    expect(parsed.title).toBe('买 牛奶');
   });
 });
 
@@ -336,16 +336,16 @@ describe('parseCapture — spec details', () => {
   });
 
   it('half an hour and %medium', () => {
-    const parsed = parseCapture('泡茶 ~半小時 %medium', ctx);
+    const parsed = parseCapture('泡茶 ~半小时 %medium', ctx);
     expect(parsed.estimateMinutes).toBe(30);
     expect(parsed.energy).toBe('medium');
     expect(parsed.title).toBe('泡茶');
   });
 
   it('November 31 stays an invalid date', () => {
-    const parsed = parseCapture('11月31日 對帳', ctx);
+    const parsed = parseCapture('11月31日 对账', ctx);
     expect(parsed.dueDate).toBeNull();
-    expect(parsed.title).toBe('11月31日 對帳');
+    expect(parsed.title).toBe('11月31日 对账');
     expect(parsed.warnings).toContain('invalid_date');
   });
 
@@ -355,5 +355,25 @@ describe('parseCapture — spec details', () => {
     expect(parseCapture('整理 ~25h', ctx).warnings).toContain(
       'invalid_estimate',
     );
+  });
+});
+
+describe('parseCapture — legacy clients', () => {
+  // The parser accepts both scripts, so older traditional input still works.
+  it('accepts traditional chinese input for legacy clients', () => {
+    const parsed = parseCapture(
+      '明天下午3點 打電話給王先生 #電腦前 *每週五 ~1h',
+      ctx,
+    );
+    expect(parsed.title).toBe('打電話給王先生');
+    expect(parsed.dueDate).toBe('2026-11-20');
+    expect(parsed.dueTime).toBe('15:00');
+    expect(parsed.tags).toEqual(['電腦前']);
+    expect(parsed.recurrence).toMatchObject({
+      freq: 'weekly',
+      interval: 1,
+      byWeekday: [5],
+    });
+    expect(parsed.estimateMinutes).toBe(60);
   });
 });

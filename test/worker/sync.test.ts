@@ -55,14 +55,14 @@ describe('sync', () => {
         op: 'upsert',
         type: 'list',
         id: 'list-a',
-        data: {name: '個人'},
+        data: {name: '个人'},
         at: editTime,
       },
       {
         op: 'upsert',
         type: 'task',
         id: 'task-a',
-        data: {title: '買牛奶', listId: 'list-a'},
+        data: {title: '买牛奶', listId: 'list-a'},
         at: editTime,
       },
       {

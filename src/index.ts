@@ -34,7 +34,7 @@ const app = new OpenAPIHono<AppEnv>({
         {
           error: {
             code: 'validation_error',
-            message: '請求格式錯誤',
+            message: '请求格式错误',
             details: {
               issues: result.error.issues.map(issue => ({
                 path: issue.path.map(String).join('.'),
@@ -104,7 +104,7 @@ app.openAPIRegistry.registerComponent('securitySchemes', 'bearerAuth', {
   type: 'http',
   scheme: 'bearer',
   description:
-    'GitHub 登入後由 POST /v1/auth/token 取得（ftk_ 開頭）。也可在 /dev/login 取得或建立個人 token。',
+    'GitHub 登录后由 POST /v1/auth/token 获取（ftk_ 开头）。也可在 /dev/login 获取或创建个人 token。',
 });
 
 app.doc31('/openapi.json', c => ({
@@ -113,23 +113,23 @@ app.doc31('/openapi.json', c => ({
     title: 'FurTodo API',
     version: '1.0.0',
     description:
-      'FurDevsCN 組織成員專用的待辦事項後端（Cloudflare Workers + KV + Durable Objects）。完整對接說明：/integration.md。所有時間回應皆為 UTC ISO 8601；日期為 YYYY-MM-DD。',
+      'FurDevsCN 组织成员专用的待办事项后端（Cloudflare Workers + KV + Durable Objects）。完整对接说明：/integration.md。所有时间响应均为 UTC ISO 8601；日期为 YYYY-MM-DD。',
   },
   servers: [{url: configFor(c.env).publicBaseUrl}],
   tags: [
     {
       name: 'Auth',
-      description: 'GitHub OAuth（PKCE）登入、session 與個人 token',
+      description: 'GitHub OAuth（PKCE）登录、session 与个人 token',
     },
-    {name: 'Account', description: '使用者、設定、配額'},
-    {name: 'Tasks', description: '任務 CRUD、完成、垃圾桶'},
-    {name: 'Lists', description: '清單（專案/領域）'},
-    {name: 'Folders', description: '清單分組'},
-    {name: 'Tags', description: '情境標籤'},
-    {name: 'Views', description: '今日 / 即將到來 / 四象限'},
-    {name: 'Capture', description: '一行文字快速建立任務'},
-    {name: 'Sync', description: '離線同步：push 變更、pull 增量'},
-    {name: 'Attachments', description: '檔案附件'},
+    {name: 'Account', description: '用户、设置、配额'},
+    {name: 'Tasks', description: '任务 CRUD、完成、回收站'},
+    {name: 'Lists', description: '清单（项目/领域）'},
+    {name: 'Folders', description: '清单分组'},
+    {name: 'Tags', description: '情境标签'},
+    {name: 'Views', description: '今日 / 即将到来 / 四象限'},
+    {name: 'Capture', description: '一行文字快速创建任务'},
+    {name: 'Sync', description: '离线同步：push 变更、pull 增量'},
+    {name: 'Attachments', description: '文件附件'},
     {name: 'Push', description: 'Web Push 提醒'},
   ],
 }));
@@ -150,7 +150,7 @@ app.onError((error, c) => {
       {
         error: {
           code: error.status === 413 ? 'payload_too_large' : 'bad_request',
-          message: error.message || '請求錯誤',
+          message: error.message || '请求错误',
         },
       },
       error.status,
@@ -169,7 +169,7 @@ app.onError((error, c) => {
     {
       error: {
         code: 'internal_error',
-        message: '伺服器錯誤',
+        message: '服务器错误',
         details: {requestId: c.get('requestId')},
       },
     },
@@ -182,7 +182,7 @@ app.notFound(c =>
     {
       error: {
         code: 'not_found',
-        message: `找不到 ${c.req.method} ${c.req.path}`,
+        message: `未找到 ${c.req.method} ${c.req.path}`,
       },
     },
     404,

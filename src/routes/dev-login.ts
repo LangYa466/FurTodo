@@ -6,11 +6,11 @@
 /** Returns the page HTML; `nonce` must match the response's CSP header. */
 export function devLoginPage(nonce: string): string {
   return `<!doctype html>
-<html lang="zh-Hant">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>FurTodo 開發者登入</title>
+    <title>FurTodo 开发者登录</title>
     <style nonce="${nonce}">
       body {
         font-family: system-ui, -apple-system, 'Noto Sans TC', sans-serif;
@@ -52,12 +52,12 @@ export function devLoginPage(nonce: string): string {
     </style>
   </head>
   <body>
-    <h1>FurTodo 開發者登入</h1>
+    <h1>FurTodo 开发者登录</h1>
     <p class="muted">
-      用 GitHub 登入（必須是 FurDevsCN 組織成員）取得 access token 來測試 API。
-      API 文件：<a href="/docs">/docs</a> ·
+      用 GitHub 登录（必须是 FurDevsCN 组织成员）获取 access token 来测试 API。
+      API 文档：<a href="/docs">/docs</a> ·
       OpenAPI：<a href="/openapi.json">/openapi.json</a> ·
-      對接說明：<a href="/integration.md">/integration.md</a>
+      对接说明：<a href="/integration.md">/integration.md</a>
     </p>
     <div id="app"></div>
     <script type="module" nonce="${nonce}">
@@ -107,7 +107,7 @@ export function devLoginPage(nonce: string): string {
       function tokenBox(label, token) {
         const textArea = element('textarea', {readOnly: true, value: token});
         const copyButton = element('button', {
-          textContent: '複製',
+          textContent: '复制',
           onclick: () => {
             navigator.clipboard.writeText(token);
           },
@@ -126,7 +126,7 @@ export function devLoginPage(nonce: string): string {
         const user = session.user;
         const tokenOutput = element('div');
         const createTokenButton = element('button', {
-          textContent: '建立 90 天個人 token（給 AI agent / 腳本）',
+          textContent: '创建 90 天个人 token（给 AI agent / 脚本）',
           onclick: async () => {
             const response = await fetch(API_BASE + '/v1/auth/tokens', {
               method: 'POST',
@@ -142,7 +142,7 @@ export function devLoginPage(nonce: string): string {
             const body = await response.json();
             tokenOutput.replaceChildren(
               response.ok
-                ? tokenBox('個人 token（只顯示這一次）', body.token)
+                ? tokenBox('个人 token（只显示这一次）', body.token)
                 : element('p', {
                     className: 'error',
                     textContent: body.error?.message ?? String(response.status),
@@ -151,7 +151,7 @@ export function devLoginPage(nonce: string): string {
           },
         });
         const logoutButton = element('button', {
-          textContent: '登出',
+          textContent: '退出登录',
           onclick: async () => {
             await fetch(API_BASE + '/v1/auth/logout', {
               method: 'POST',
@@ -171,7 +171,7 @@ export function devLoginPage(nonce: string): string {
             element('strong', {textContent: user.login}),
             ' · ' + membership.org + ' ' + membership.role,
           ),
-          tokenBox('Access token（30 天滑動有效）', token),
+          tokenBox('Access token（30 天滑动有效）', token),
           element('pre', {
             textContent:
               "curl -H 'Authorization: Bearer " + token + "' " +
@@ -185,7 +185,7 @@ export function devLoginPage(nonce: string): string {
 
       function renderLogin(message) {
         const loginButton = element('button', {
-          textContent: '用 GitHub 登入',
+          textContent: '用 GitHub 登录',
           onclick: startLogin,
         });
         if (message) {
@@ -199,7 +199,7 @@ export function devLoginPage(nonce: string): string {
         const saved = JSON.parse(sessionStorage.getItem('pkce') ?? 'null');
         sessionStorage.removeItem('pkce');
         if (!saved || saved.state !== params.get('state')) {
-          renderLogin('state 不符，請重新登入');
+          renderLogin('state 不符，请重新登录');
           return;
         }
         const response = await fetch(API_BASE + '/v1/auth/token', {
@@ -214,7 +214,7 @@ export function devLoginPage(nonce: string): string {
         });
         const body = await response.json();
         if (!response.ok) {
-          renderLogin(body.error?.message ?? '登入失敗');
+          renderLogin(body.error?.message ?? '登录失败');
           return;
         }
         sessionStorage.setItem('session', JSON.stringify(body));

@@ -114,11 +114,11 @@ export const TOMBSTONE_RETENTION_MS = TOMBSTONE_TTL_SECONDS * 1000;
 const METADATA_NAME_MAX_LENGTH = 100;
 
 export const DEFAULT_SETTINGS: Settings = {
-  timezone: 'Asia/Taipei',
+  timezone: 'Asia/Shanghai',
   weekStart: 1,
   defaultReminderTime: '09:00',
   todayIncludesOverdue: true,
-  locale: 'zh-TW',
+  locale: 'zh-CN',
 };
 
 export const REQUIRED_ON_CREATE: Record<Kind, readonly string[]> = {

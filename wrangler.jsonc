@@ -45,7 +45,7 @@
     "VAPID_SUBJECT": "mailto:user@example.com",
 
     // Per-user daily quotas; they reset at midnight in QUOTA_TIMEZONE.
-    "QUOTA_TIMEZONE": "Asia/Taipei",
+    "QUOTA_TIMEZONE": "Asia/Shanghai",
     "QUOTA_REQUESTS_PER_DAY": "20000",
     "QUOTA_KV_READS_PER_DAY": "60000",
     "QUOTA_KV_WRITES_PER_DAY": "3000",

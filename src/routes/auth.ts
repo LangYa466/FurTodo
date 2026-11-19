@@ -58,7 +58,7 @@ export const sessionSchema = z
   .object({
     id: z.string(),
     kind: z.enum(['oauth', 'pat']).openapi({
-      description: 'oauth = 登入產生；pat = 個人存取 token（給腳本/AI agent）',
+      description: 'oauth = 登录生成；pat = 个人访问 token（给脚本/AI agent）',
     }),
     name: z.string().nullable(),
     userAgent: z.string().nullable(),
@@ -66,7 +66,7 @@ export const sessionSchema = z
     lastUsedAt: z.string(),
     expiresAt: z
       .string()
-      .openapi({description: 'oauth session 每次使用後滑動延長 30 天'}),
+      .openapi({description: 'oauth session 每次使用后滑动延长 30 天'}),
     current: z.boolean(),
   })
   .openapi('Session');
@@ -78,12 +78,12 @@ export const accountSchema = z
       role: z.enum(['admin', 'member']),
       via: z.enum(['user_token', 'org_token']),
       verifiedAt: z.string().openapi({
-        description: '上次向 GitHub 確認成員身分的時間（每 6 小時重驗）',
+        description: '上次向 GitHub 确认成员身份的时间（每 6 小时重验）',
       }),
     }),
     orgs: z
       .array(githubOrgSchema)
-      .openapi({description: '使用者所屬的 GitHub 組織（含私人成員身分）'}),
+      .openapi({description: '用户所属的 GitHub 组织（含私有成员身份）'}),
     session: sessionSchema,
     settings: settingsEntitySchema,
   })
@@ -92,7 +92,7 @@ export const accountSchema = z
 const tokenResponseSchema = accountSchema
   .extend({
     access_token: z.string().openapi({
-      description: '之後所有請求帶 Authorization: Bearer <access_token>',
+      description: '之后所有请求需带 Authorization: Bearer <access_token>',
       example: 'ftk_123456.xxxxxxxx.yyyyyyyy',
     }),
     token_type: z.literal('Bearer'),
@@ -112,7 +112,7 @@ async function enforceLoginRateLimit(c: AppContext): Promise<void> {
     throw new AppError(
       429,
       'rate_limited',
-      '登入請求太頻繁，請稍後再試',
+      '登录请求太频繁，请稍后再试',
       undefined,
       RATE_LIMIT_RETRY_SECONDS,
     );
@@ -125,14 +125,14 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'get',
       path: '/v1/auth/github/authorize',
       tags: ['Auth'],
-      summary: '開始 GitHub 登入（瀏覽器導向）',
+      summary: '开始 GitHub 登录（浏览器跳转）',
       description:
-        '客戶端先產生 PKCE code_verifier（43-128 字元）與 state，把使用者導到這裡。伺服器驗證 redirect_uri 白名單後 302 到 GitHub。登入完成後會 302 回 redirect_uri?code=<一次性登入碼>&state=<原 state>，失敗則帶 error / error_description。',
+        '客户端先生成 PKCE code_verifier（43-128 字符）与 state，把用户引导到这里。服务器验证 redirect_uri 白名单后 302 到 GitHub。登录完成后会 302 回 redirect_uri?code=<一次性登录码>&state=<原 state>，失败则带 error / error_description。',
       request: {
         query: z.object({
           redirect_uri: z.string().openapi({
             description:
-              '客戶端回呼網址（需在白名單內），例如 http://localhost:5173/auth/callback 或 furtodo://auth/callback',
+              '客户端回调网址（需在白名单内），例如 http://localhost:5173/auth/callback 或 furtodo://auth/callback',
           }),
           code_challenge: z
             .string()
@@ -143,11 +143,11 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
             .string()
             .max(512)
             .optional()
-            .openapi({description: '客戶端隨機值，回呼時原樣帶回；務必比對'}),
+            .openapi({description: '客户端随机值，回调时原样返回；务必比对'}),
         }),
       },
       responses: {
-        302: {description: '導向 GitHub 授權頁'},
+        302: {description: '跳转到 GitHub 授权页'},
         ...errorResponses(400, 429),
       },
     }),
@@ -160,7 +160,7 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
         `${config.publicBaseUrl}/dev/login`,
       ];
       if (!isAllowedRedirect(query.redirect_uri, allowed)) {
-        throw new AppError(400, 'bad_request', 'redirect_uri 不在白名單內', {
+        throw new AppError(400, 'bad_request', 'redirect_uri 不在白名单内', {
           allowed: config.allowedRedirects,
         });
       }
@@ -198,7 +198,7 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'get',
       path: '/v1/auth/github/callback',
       tags: ['Auth'],
-      summary: 'GitHub OAuth 回呼（由 GitHub 呼叫，客戶端不要直接用）',
+      summary: 'GitHub OAuth 回调（由 GitHub 调用，客户端不要直接用）',
       request: {
         query: z.object({
           code: z.string().optional(),
@@ -208,7 +208,7 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
         }),
       },
       responses: {
-        302: {description: '導回客戶端 redirect_uri'},
+        302: {description: '跳回客户端 redirect_uri'},
         ...errorResponses(400, 429),
       },
     }),
@@ -227,7 +227,7 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
         throw new AppError(
           400,
           'bad_request',
-          '登入流程已失效，請回到 App 重新登入',
+          '登录流程已失效，请回到 App 重新登录',
         );
       }
 
@@ -244,13 +244,13 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
       if (query.error) {
         return redirectToClient({
           error: 'access_denied',
-          error_description: query.error_description ?? '使用者取消授權',
+          error_description: query.error_description ?? '用户取消授权',
         });
       }
       if (!query.code) {
         return redirectToClient({
           error: 'invalid_request',
-          error_description: 'GitHub 沒有回傳 code',
+          error_description: 'GitHub 没有返回 code',
         });
       }
 
@@ -270,7 +270,7 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
       if (!exchange.scopes.some(scope => ORG_READ_SCOPES.includes(scope))) {
         return redirectToClient({
           error: 'insufficient_scope',
-          error_description: '需要 read:org 權限才能確認組織成員身分',
+          error_description: '需要 read:org 权限才能确认组织成员身份',
         });
       }
       let profile: GithubProfile;
@@ -295,22 +295,22 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
         case 'pending':
           return redirectToClient({
             error: 'org_membership_pending',
-            error_description: `請先到 GitHub 接受 ${org} 的組織邀請`,
+            error_description: `请先到 GitHub 接受 ${org} 的组织邀请`,
           });
         case 'not_member':
           return redirectToClient({
             error: 'not_org_member',
-            error_description: `${profile.login} 不是 ${org} 成員。若你確定是成員，可能是組織啟用了 OAuth App 存取限制：請在 GitHub 授權頁對 ${org} 按 Request/Grant，或請 owner 核准本應用`,
+            error_description: `${profile.login} 不是 ${org} 成员。若你确定是成员，可能是组织启用了 OAuth App 访问限制：请在 GitHub 授权页对 ${org} 点击 Request/Grant，或请 owner 批准本应用`,
           });
         case 'restricted':
           return redirectToClient({
             error: 'org_access_restricted',
-            error_description: `${org} 啟用了 OAuth App 存取限制，請組織 owner 核准本應用後再登入`,
+            error_description: `${org} 启用了 OAuth App 访问限制，请组织 owner 批准本应用后再登录`,
           });
         default:
           return redirectToClient({
             error: 'github_error',
-            error_description: '無法向 GitHub 確認組織成員身分，請稍後再試',
+            error_description: '无法向 GitHub 确认组织成员身份，请稍后再试',
           });
       }
       const userId = String(profile.id);
@@ -343,9 +343,9 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'post',
       path: '/v1/auth/token',
       tags: ['Auth'],
-      summary: '用一次性登入碼 + code_verifier 換 access token',
+      summary: '用一次性登录码 + code_verifier 换取 access token',
       description:
-        '登入碼 5 分鐘內有效且只能用一次。access token 為 30 天滑動有效期（有使用就延長）。',
+        '登录码 5 分钟内有效且只能使用一次。access token 为 30 天滑动有效期（有使用就延长）。',
       request: {
         body: {
           content: {
@@ -357,7 +357,7 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
                 redirect_uri: z
                   .string()
                   .max(2048)
-                  .openapi({description: '必須與 authorize 時相同'}),
+                  .openapi({description: '必须与 authorize 时相同'}),
               }),
             },
           },
@@ -365,7 +365,7 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
         },
       },
       responses: {
-        200: jsonContent(tokenResponseSchema, '登入成功'),
+        200: jsonContent(tokenResponseSchema, '登录成功'),
         ...errorResponses(400, 403, 429),
       },
     }),
@@ -374,7 +374,7 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
       const body = c.req.valid('json');
       const claims = await verifyToken(c.env.TOKEN_SECRET, 'ftc', body.code);
       if (!claims) {
-        throw new AppError(400, 'bad_request', '登入碼無效', {
+        throw new AppError(400, 'bad_request', '登录码无效', {
           oauthError: 'invalid_grant',
         });
       }
@@ -404,10 +404,10 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'post',
       path: '/v1/auth/logout',
       tags: ['Auth'],
-      summary: '登出目前 session',
+      summary: '注销当前 session',
       security: BEARER_SECURITY,
       responses: {
-        200: jsonContent(z.object({revoked: z.boolean()}), '已登出'),
+        200: jsonContent(z.object({revoked: z.boolean()}), '已注销'),
         ...errorResponses(401),
       },
     }),
@@ -422,12 +422,12 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'get',
       path: '/v1/auth/sessions',
       tags: ['Auth'],
-      summary: '列出所有登入中的裝置與個人 token',
+      summary: '列出所有已登录的设备与个人 token',
       security: BEARER_SECURITY,
       responses: {
         200: jsonContent(
           z.object({sessions: z.array(sessionSchema)}),
-          'session 清單',
+          'session 清单',
         ),
         ...errorResponses(401, 403, 429),
       },
@@ -443,11 +443,11 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'delete',
       path: '/v1/auth/sessions/{id}',
       tags: ['Auth'],
-      summary: '撤銷某個 session（登出其他裝置或刪除個人 token）',
+      summary: '撤销某个 session（注销其他设备或删除个人 token）',
       security: BEARER_SECURITY,
       request: {params: z.object({id: z.string().max(64)})},
       responses: {
-        200: jsonContent(z.object({revoked: z.boolean()}), '結果'),
+        200: jsonContent(z.object({revoked: z.boolean()}), '结果'),
         ...errorResponses(401, 403, 429),
       },
     }),
@@ -463,9 +463,9 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'post',
       path: '/v1/auth/tokens',
       tags: ['Auth'],
-      summary: '建立個人存取 token（給 CLI、腳本、AI agent 測試用）',
+      summary: '创建个人访问 token（供 CLI、脚本、AI agent 测试用）',
       description:
-        'token 只在建立時回傳一次。同樣受組織成員重驗與每日配額限制。',
+        'token 只在创建时返回一次。同样受组织成员重验与每日配额限制。',
       security: BEARER_SECURITY,
       request: {
         body: {
@@ -487,7 +487,7 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
       responses: {
         201: jsonContent(
           z.object({token: z.string(), session: sessionSchema}),
-          '已建立',
+          '已创建',
         ),
         ...errorResponses(400, 401, 403, 429),
       },

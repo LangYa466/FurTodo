@@ -71,7 +71,7 @@ export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
     ? await verifyToken(c.env.TOKEN_SECRET, 'ftk', token)
     : null;
   if (!claims) {
-    throw new AppError(401, 'invalid_token', '缺少或無效的 Bearer token');
+    throw new AppError(401, 'invalid_token', '缺少或无效的 Bearer token');
   }
   c.set('auth', {...claims, hub: hubFor(c.env, claims.userId)});
   await next();
@@ -112,7 +112,7 @@ export class ReadQuotaMeter implements QuotaCharger {
         throw new AppError(
           429,
           'quota_exceeded',
-          `今日 KV ${kind} 配額已用完`,
+          `今日 KV ${kind} 配额已用完`,
           {kind},
           retryAfter,
         );
@@ -214,7 +214,7 @@ function invalidPatch(
 ): PatchValidation {
   return {
     ok: false,
-    message: `${kind} 欄位驗證失敗`,
+    message: `${kind} 字段验证失败`,
     issues: issues.map(issue => ({
       path: issue.path.map(String).join('.'),
       message: issue.message,
@@ -256,7 +256,7 @@ export async function applyMutation(
 ): Promise<MutationOutcome> {
   const {hub, sessionId} = c.get('auth');
   const [outcome] = unwrap(await hub.applyMutations(sessionId, [mutation]));
-  if (!outcome) throw new AppError(500, 'internal_error', 'mutation 沒有結果');
+  if (!outcome) throw new AppError(500, 'internal_error', 'mutation 没有结果');
   if (outcome.status === 'rejected' && outcome.error) {
     const {status, code, message, retryAfter} = outcome.error;
     throw new AppError(

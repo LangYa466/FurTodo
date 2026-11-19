@@ -8,20 +8,20 @@ import {accountSchema} from './auth';
 import {readEntity} from './entities';
 
 const quotaCountsSchema = z.object({
-  requests: z.int().openapi({description: 'API 請求數'}),
-  reads: z.int().openapi({description: 'KV 讀取（每個 key 算 1）'}),
-  writes: z.int().openapi({description: 'KV 寫入/刪除'}),
-  lists: z.int().openapi({description: 'KV 列舉（每頁 1000 key 算 1）'}),
+  requests: z.int().openapi({description: 'API 请求数'}),
+  reads: z.int().openapi({description: 'KV 读取（每个 key 算 1 次）'}),
+  writes: z.int().openapi({description: 'KV 写入/删除'}),
+  lists: z.int().openapi({description: 'KV 列举（每页 1000 个 key 算 1 次）'}),
   uploadBytes: z.int(),
   logins: z.int(),
-  pushes: z.int().openapi({description: 'Web Push 送出數'}),
+  pushes: z.int().openapi({description: 'Web Push 发送数'}),
 });
 
 const usageSchema = z
   .object({
     day: z.string(),
     timeZone: z.string(),
-    resetAt: z.string().openapi({description: '下次每日配額重置時間'}),
+    resetAt: z.string().openapi({description: '下次每日配额重置时间'}),
     used: quotaCountsSchema,
     limits: quotaCountsSchema,
     totals: z.object({entities: z.int(), storageBytes: z.int()}),
@@ -39,10 +39,10 @@ export function registerMeRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'get',
       path: '/v1/me',
       tags: ['Account'],
-      summary: '目前使用者、組織成員身分、GitHub 組織清單、設定',
+      summary: '当前用户、组织成员身份、GitHub 组织清单、设置',
       security: BEARER_SECURITY,
       responses: {
-        200: jsonContent(accountSchema, '使用者資訊'),
+        200: jsonContent(accountSchema, '用户信息'),
         ...errorResponses(401, 403, 429),
       },
     }),
@@ -57,7 +57,7 @@ export function registerMeRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'get',
       path: '/v1/usage',
       tags: ['Account'],
-      summary: '今日配額用量與總量上限',
+      summary: '今日配额用量与总量上限',
       security: BEARER_SECURITY,
       responses: {
         200: jsonContent(usageSchema, '用量'),
@@ -75,10 +75,10 @@ export function registerMeRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'get',
       path: '/v1/settings',
       tags: ['Account'],
-      summary: '使用者設定（時區、週起始日等，跨裝置同步）',
+      summary: '用户设置（时区、周起始日等，跨设备同步）',
       security: BEARER_SECURITY,
       responses: {
-        200: jsonContent(settingsEntitySchema, '設定'),
+        200: jsonContent(settingsEntitySchema, '设置'),
         ...errorResponses(401, 403, 429),
       },
     }),
@@ -96,7 +96,7 @@ export function registerMeRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'patch',
       path: '/v1/settings',
       tags: ['Account'],
-      summary: '更新設定',
+      summary: '更新设置',
       security: BEARER_SECURITY,
       request: {
         body: {
@@ -105,7 +105,7 @@ export function registerMeRoutes(app: OpenAPIHono<AppEnv>): void {
         },
       },
       responses: {
-        200: jsonContent(settingsEntitySchema, '更新後的設定'),
+        200: jsonContent(settingsEntitySchema, '更新后的设置'),
         ...errorResponses(400, 401, 403, 429),
       },
     }),
@@ -117,7 +117,7 @@ export function registerMeRoutes(app: OpenAPIHono<AppEnv>): void {
         data: parsePatchOrThrow('settings', await c.req.json()),
       });
       if (!outcome.entity) {
-        throw new AppError(500, 'internal_error', '設定沒有寫入');
+        throw new AppError(500, 'internal_error', '设置没有写入');
       }
       return c.json(outcome.entity, 200);
     },

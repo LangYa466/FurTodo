@@ -819,7 +819,7 @@ export class UserHub extends DurableObject<Env> {
   private async authorize(sessionId: string, now: number): Promise<void> {
     const session = this.findSession(sessionId);
     if (!session || session.status !== 'active') {
-      fail(401, 'invalid_token', 'Session 不存在或已登出');
+      fail(401, 'invalid_token', 'Session 不存在或已注销');
     }
     if (session.expiresAt <= now) {
       this.deleteSession(sessionId);

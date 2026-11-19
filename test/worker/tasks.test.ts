@@ -54,14 +54,14 @@ describe('tasks', () => {
     const id = '019a9e8c-0000-7000-8000-000000000001';
     const created = await post<Task & {subtasks: Subtask[]}>('/v1/tasks', {
       id,
-      title: '打電話給王先生確認報價',
+      title: '打电话给王先生确认报价',
       priority: 3,
-      subtasks: [{title: '準備報價單'}],
+      subtasks: [{title: '准备报价单'}],
     });
     expect(created.status).toBe(201);
     expect(created.body).toMatchObject({
       id,
-      title: '打電話給王先生確認報價',
+      title: '打电话给王先生确认报价',
       priority: 3,
       rev: 1,
       listId: null,
@@ -71,7 +71,7 @@ describe('tasks', () => {
 
     const again = await post<Task>('/v1/tasks', {
       id,
-      title: '打電話給王先生確認報價',
+      title: '打电话给王先生确认报价',
       priority: 3,
     });
     expect(again.body.rev).toBe(1);
@@ -84,7 +84,7 @@ describe('tasks', () => {
       dueTime: '15:00',
     });
     expect(updated.body).toMatchObject({
-      title: '打電話給王先生確認報價',
+      title: '打电话给王先生确认报价',
       dueDate: '2026-12-01',
       dueTime: '15:00',
       dueAt: '2026-12-01T07:00:00.000Z',
@@ -99,7 +99,7 @@ describe('tasks', () => {
 
   it('completing a recurring task spawns the next occurrence exactly once', async () => {
     const created = await post<Task>('/v1/tasks', {
-      title: '繳電話費',
+      title: '缴电话费',
       dueDate: '2026-11-19',
       recurrence: {freq: 'monthly', interval: 1},
     });
@@ -116,7 +116,7 @@ describe('tasks', () => {
     expect(done.body.task.completedAt).not.toBeNull();
     expect(done.body.spawned).toHaveLength(1);
     expect(done.body.spawned[0]).toMatchObject({
-      title: '繳電話費',
+      title: '缴电话费',
       completedAt: null,
       seriesId: created.body.id,
     });
@@ -133,7 +133,7 @@ describe('tasks', () => {
   it('deleting a list moves its tasks to the trash in the background; restoring brings them back', async () => {
     const list = await post<Task>('/v1/lists', {name: '工作'});
     const t1 = await post<Task>('/v1/tasks', {
-      title: '寫週報',
+      title: '写周报',
       listId: list.body.id,
     });
     const t2 = await post<Task>('/v1/tasks', {
@@ -172,7 +172,7 @@ describe('tasks', () => {
   });
 
   it('refuses edits to trashed tasks until restored', async () => {
-    const t = await post<Task>('/v1/tasks', {title: '暫時的'});
+    const t = await post<Task>('/v1/tasks', {title: '暂时的'});
     await apiJson(`/v1/tasks/${t.body.id}`, {token, method: 'DELETE'});
     const edit = await patch<{error: {code: string}}>(
       `/v1/tasks/${t.body.id}`,
@@ -191,7 +191,7 @@ describe('tasks', () => {
     });
     expect(s.body).toMatchObject({timezone: 'America/New_York', weekStart: 0});
     const t = await post<Task>('/v1/tasks', {
-      title: '紐約會議',
+      title: '纽约会议',
       dueDate: '2026-07-01',
       dueTime: '09:00',
     });
@@ -199,6 +199,6 @@ describe('tasks', () => {
     expect(
       (await patch('/v1/settings', {timezone: 'Mars/Olympus'})).status,
     ).toBe(400);
-    await patch('/v1/settings', {timezone: 'Asia/Taipei', weekStart: 1});
+    await patch('/v1/settings', {timezone: 'Asia/Shanghai', weekStart: 1});
   });
 });

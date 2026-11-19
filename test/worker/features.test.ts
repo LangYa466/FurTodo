@@ -49,37 +49,37 @@ describe('quick capture', () => {
       parsed: {title: string};
       resolved: {listId: string; newTags: string[]};
     }>('/v1/capture', {
-      text: '明天下午3點 打電話給王先生確認報價 #電腦前 @工作 !高 ~15m',
+      text: '明天下午3点 打电话给王先生确认报价 #电脑前 @工作 !高 ~15m',
       dryRun: true,
     });
     expect(preview.status).toBe(200);
     expect(preview.body.task).toBeNull();
     expect(preview.body.resolved).toMatchObject({
       listId: work.body.id,
-      newTags: ['電腦前'],
+      newTags: ['电脑前'],
     });
 
     const created = await post<{
       task: Task;
       createdTags: Array<{id: string; name: string}>;
     }>('/v1/capture', {
-      text: '明天下午3點 打電話給王先生確認報價 #電腦前 @工作 !高 ~15m',
+      text: '明天下午3点 打电话给王先生确认报价 #电脑前 @工作 !高 ~15m',
       myDay: true,
     });
     expect(created.status).toBe(201);
     expect(created.body.task).toMatchObject({
-      title: '打電話給王先生確認報價',
+      title: '打电话给王先生确认报价',
       dueTime: '15:00',
       priority: 3,
       estimateMinutes: 15,
       listId: work.body.id,
     });
-    expect(created.body.createdTags.map(t => t.name)).toEqual(['電腦前']);
+    expect(created.body.createdTags.map(t => t.name)).toEqual(['电脑前']);
     expect(created.body.task.tagIds).toEqual([created.body.createdTags[0]!.id]);
 
     const reuse = await post<{createdTags: unknown[]; task: Task}>(
       '/v1/capture',
-      {text: '整理桌面 #電腦前'},
+      {text: '整理桌面 #电脑前'},
     );
     expect(reuse.body.createdTags).toEqual([]);
     expect(reuse.body.task.tagIds).toEqual([created.body.createdTags[0]!.id]);
@@ -89,10 +89,10 @@ describe('quick capture', () => {
 describe('views', () => {
   it('today shows My Day, overdue, due today and focus picks the most critical', async () => {
     const today = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Taipei',
+      timeZone: 'Asia/Shanghai',
     }).format(new Date());
     await post('/v1/tasks', {
-      title: '逾期報告',
+      title: '逾期报告',
       dueDate: '2020-01-01',
       quadrant: 1,
     });
@@ -109,12 +109,12 @@ describe('views', () => {
     expect(view.status).toBe(200);
     expect(view.body.date).toBe(today);
     expect(view.body.myDay.map(t => t.title)).toContain('我的一天');
-    expect(view.body.overdue.map(t => t.title)).toContain('逾期報告');
+    expect(view.body.overdue.map(t => t.title)).toContain('逾期报告');
     expect(view.body.dueToday.map(t => t.title)).toContain('今天到期');
-    expect(view.body.focus[0]!.title).toBe('逾期報告');
+    expect(view.body.focus[0]!.title).toBe('逾期报告');
 
     const matrix = await apiJson<{q1: Task[]}>('/v1/views/matrix', {token});
-    expect(matrix.body.q1.map(t => t.title)).toContain('逾期報告');
+    expect(matrix.body.q1.map(t => t.title)).toContain('逾期报告');
     const upcoming = await apiJson<{
       dates: Array<{date: string; tasks: Task[]}>;
     }>('/v1/views/upcoming?days=3', {token});
@@ -124,9 +124,9 @@ describe('views', () => {
 
 describe('attachments', () => {
   it('uploads, downloads with bearer and signed URL, deletes', async () => {
-    const task = await post<Task>('/v1/tasks', {title: '報帳'});
+    const task = await post<Task>('/v1/tasks', {title: '报账'});
     const upload = await api(
-      `/v1/tasks/${task.body.id}/attachments?name=${encodeURIComponent('收據.txt')}`,
+      `/v1/tasks/${task.body.id}/attachments?name=${encodeURIComponent('收据.txt')}`,
       {
         token,
         method: 'POST',
@@ -200,7 +200,7 @@ describe('web push reminders', () => {
     }
     pushCalls.length = 0;
     await post('/v1/tasks', {
-      title: '吃藥',
+      title: '吃药',
       reminders: [{at: new Date(Date.now() + 500).toISOString()}],
     });
     expect(await runDurableObjectAlarm(hubStub(UID))).toBe(true);

@@ -55,7 +55,7 @@ function decodeCursor(raw: string): number {
   throw new AppError(
     400,
     'bad_request',
-    'cursor 無效；請不帶 cursor 重新全量同步',
+    'cursor 无效；请不带 cursor 重新全量同步',
   );
 }
 
@@ -63,18 +63,18 @@ const pullResponseSchema = z
   .object({
     changes: z.array(changeSchema).openapi({
       description:
-        '依 updatedAt 由舊到新；包含刪除（entity.deletedAt 非 null）',
+        '按 updatedAt 从旧到新；包含删除（entity.deletedAt 非 null）',
     }),
     cursor: z
       .string()
       .nullable()
-      .openapi({description: '下次 pull 帶回；reset=true 時為 null'}),
+      .openapi({description: '下次 pull 带回；reset=true 时为 null'}),
     hasMore: z
       .boolean()
-      .openapi({description: 'true = 立刻用新 cursor 再拉一次'}),
+      .openapi({description: 'true = 立刻用新 cursor 再拉取一次'}),
     reset: z.boolean().openapi({
       description:
-        'true = cursor 太舊（> 30 天），請丟掉本地快取（保留未送出的 mutation）並不帶 cursor 全量重拉',
+        'true = cursor 太旧（> 30 天），请丢弃本地缓存（保留未发送的 mutation）并不带 cursor 全量重新拉取',
     }),
     serverTime: z.string(),
   })
@@ -91,9 +91,9 @@ export function registerSyncRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'post',
       path: '/v1/sync/push',
       tags: ['Sync'],
-      summary: '批次送出離線累積的變更',
+      summary: '批量提交离线累积的变更',
       description:
-        '每個 mutation 獨立處理、互不影響（單筆驗證失敗只會讓那筆 rejected）。所有 mutation 都是冪等的，網路中斷後可整批重送。逐欄位 Last-Writer-Wins：欄位的 at 比伺服器上該欄位最後寫入時間舊就不覆蓋。',
+        '每个 mutation 独立处理、互不影响（单条验证失败只会让那条 rejected）。所有 mutation 都是幂等的，网络中断后可整批重发。逐字段 Last-Writer-Wins：字段的 at 比服务器上该字段最后写入时间旧就不覆盖。',
       security: BEARER_SECURITY,
       request: {
         body: {
@@ -110,7 +110,7 @@ export function registerSyncRoutes(app: OpenAPIHono<AppEnv>): void {
       responses: {
         200: jsonContent(
           z.object({results: z.array(mutationResultSchema)}),
-          '逐筆結果（與請求順序相同）',
+          '逐条结果（与请求顺序相同）',
         ),
         ...errorResponses(400, 401, 403, 429),
       },
@@ -175,9 +175,9 @@ export function registerSyncRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'get',
       path: '/v1/sync/pull',
       tags: ['Sync'],
-      summary: '拉取 cursor 之後的變更（不帶 cursor = 全量快照）',
+      summary: '拉取 cursor 之后的变更（不带 cursor = 全量快照）',
       description:
-        '全量快照不含已刪除項目；增量包含刪除。沒有變更時幾乎不耗配額，可以每 15-60 秒輪詢一次，或在 App 回到前景、網路恢復時呼叫。hasMore=true 要立刻接著拉。',
+        '全量快照不含已删除条目；增量包含删除。没有变更时几乎不消耗配额，可以每 15-60 秒轮询一次，或在 App 回到前台、网络恢复时调用。hasMore=true 要立刻接着拉取。',
       security: BEARER_SECURITY,
       request: {
         query: z.object({
@@ -191,7 +191,7 @@ export function registerSyncRoutes(app: OpenAPIHono<AppEnv>): void {
         }),
       },
       responses: {
-        200: jsonContent(pullResponseSchema, '變更'),
+        200: jsonContent(pullResponseSchema, '变更'),
         ...errorResponses(400, 401, 403, 429),
       },
     }),

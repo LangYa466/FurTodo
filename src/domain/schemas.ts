@@ -5,29 +5,29 @@ import {KINDS, type ApiEntity} from './model';
 
 export const idSchema = z
   .string()
-  .regex(ID_PATTERN, 'id 只能包含 A-Z a-z 0-9 _ -，長度 1-64')
+  .regex(ID_PATTERN, 'id 只能包含 A-Z a-z 0-9 _ -，长度 1-64')
   .openapi({
-    description: '實體 id。建議由客戶端產生 UUIDv7（離線也能建立）',
+    description: '实体 id。建议由客户端生成 UUIDv7（离线也能创建）',
     example: '019a9e8c-6f3b-7c2e-9b1a-3f2d4c5b6a71',
   });
 export const dateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/)
   .refine(isValidDate, '不是有效日期')
-  .openapi({description: '日曆日期（不含時區）', example: '2026-11-20'});
+  .openapi({description: '日历日期（不含时区）', example: '2026-11-20'});
 export const timeSchema = z
   .string()
-  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, '時間格式需為 HH:mm')
-  .openapi({description: '24 小時制時間', example: '15:00'});
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, '时间格式需为 HH:mm')
+  .openapi({description: '24 小时制时间', example: '15:00'});
 export const isoDateTimeSchema = z.iso.datetime({offset: true}).openapi({
-  description: 'ISO 8601 時刻（回應一律為 UTC Z 格式）',
+  description: 'ISO 8601 时刻（响应一律为 UTC Z 格式）',
   example: '2026-11-20T07:00:00.000Z',
 });
 const colorSchema = z
   .string()
-  .regex(/^#[0-9a-fA-F]{6}$/, '顏色需為 #RRGGBB')
+  .regex(/^#[0-9a-fA-F]{6}$/, '颜色需为 #RRGGBB')
   .openapi({example: '#4F46E5'});
-export const kindSchema = z.enum(KINDS).openapi({description: '實體種類'});
+export const kindSchema = z.enum(KINDS).openapi({description: '实体种类'});
 
 export const recurrenceSchema = z
   .strictObject({
@@ -37,22 +37,22 @@ export const recurrenceSchema = z
       .min(1)
       .max(365)
       .default(1)
-      .openapi({description: '每 N 個 freq'}),
+      .openapi({description: '每 N 个 freq'}),
     byWeekday: z
       .array(z.int().min(0).max(6))
       .max(7)
       .nullable()
       .optional()
-      .openapi({description: 'weekly：0=週日 … 6=週六；省略則取到期日的星期'}),
+      .openapi({description: 'weekly：0=周日 … 6=周六；省略则取到期日的星期'}),
     byMonthDay: z
       .int()
       .min(-1)
       .max(31)
-      .refine(v => v !== 0, 'byMonthDay 不可為 0')
+      .refine(v => v !== 0, 'byMonthDay 不可为 0')
       .nullable()
       .optional()
       .openapi({
-        description: 'monthly/yearly：1-31，-1 = 月底；月份天數不足時夾到月底',
+        description: 'monthly/yearly：1-31，-1 = 月底；天数不足时取月底',
       }),
     byMonth: z
       .int()
@@ -64,24 +64,24 @@ export const recurrenceSchema = z
     until: dateSchema
       .nullable()
       .optional()
-      .openapi({description: '最後可能日期（含）'}),
+      .openapi({description: '最后可能日期（含）'}),
     count: z
       .int()
       .min(1)
       .max(10_000)
       .nullable()
       .optional()
-      .openapi({description: '剩餘次數（含本期）；每產生下一期減 1'}),
+      .openapi({description: '剩余次数（含本期）；每生成下一期减 1'}),
     basis: z.enum(['due', 'completion']).default('due').openapi({
       description:
-        'due：照排程（逾期完成會追到今天以後）；completion：完成日 + interval',
+        'due：按计划（逾期完成顺延到今天以后）；completion：完成日 + interval',
     }),
   })
   .openapi('Recurrence');
 
 export const subtaskInputSchema = z
   .strictObject({
-    id: idSchema.optional().openapi({description: '省略時由伺服器產生'}),
+    id: idSchema.optional().openapi({description: '省略时由服务器生成'}),
     title: z.string().trim().min(1).max(500),
     completed: z.boolean().default(false),
   })
@@ -95,7 +95,7 @@ export const linkInputSchema = z
       .max(2048)
       .refine(
         v => /^(https?:\/\/|mailto:|tel:)/i.test(v) && URL.canParse(v),
-        '只接受 http(s)/mailto/tel 網址',
+        '只接受 http(s)/mailto/tel 网址',
       ),
     title: z.string().max(200).nullable().default(null),
   })
@@ -104,7 +104,7 @@ export const linkInputSchema = z
 export const reminderInputSchema = z
   .strictObject({
     id: idSchema.optional(),
-    at: isoDateTimeSchema.openapi({description: '通知時刻（絕對時間）'}),
+    at: isoDateTimeSchema.openapi({description: '通知时刻（绝对时间）'}),
   })
   .openapi('ReminderInput');
 
@@ -114,24 +114,24 @@ const taskFields = {
     .trim()
     .min(1)
     .max(500)
-    .openapi({description: '具體可執行的動作，例如「打電話給王先生確認報價」'}),
-  notes: z.string().max(20_000).openapi({description: '備註（Markdown）'}),
+    .openapi({description: '具体可执行的动作，例如“给王先生打电话确认报价”'}),
+  notes: z.string().max(20_000).openapi({description: '备注（Markdown）'}),
   listId: idSchema.nullable().openapi({
-    description: '所屬清單；null = 收件匣（Inbox）',
+    description: '所属清单；null = 收件箱（Inbox）',
   }),
-  tagIds: z.array(idSchema).max(20).openapi({description: '情境標籤 id'}),
+  tagIds: z.array(idSchema).max(20).openapi({description: '情境标签 id'}),
   priority: z
     .int()
     .min(0)
     .max(3)
-    .openapi({description: '0 無、1 低、2 中、3 高'}),
+    .openapi({description: '0 无、1 低、2 中、3 高'}),
   quadrant: z.int().min(1).max(4).nullable().openapi({
     description:
-      '四象限：1 重要且緊急、2 重要不緊急、3 緊急不重要、4 都不；null 未分類',
+      '四象限：1 重要且紧急、2 重要不紧急、3 紧急不重要、4 都不；null 未分类',
   }),
   dueDate: dateSchema.nullable(),
   dueTime: timeSchema.nullable().openapi({
-    description: '有值時 dueDate 也必須有值；以使用者設定時區解讀',
+    description: '有值时 dueDate 也必须有值；按用户设置的时区解读',
   }),
   reminders: z.array(reminderInputSchema).max(10),
   estimateMinutes: z
@@ -139,7 +139,7 @@ const taskFields = {
     .min(1)
     .max(1440)
     .nullable()
-    .openapi({description: '預估分鐘數'}),
+    .openapi({description: '预估分钟数'}),
   energy: z
     .enum(['low', 'medium', 'high'])
     .nullable()
@@ -147,24 +147,24 @@ const taskFields = {
   subtasks: z
     .array(subtaskInputSchema)
     .max(100)
-    .openapi({description: '子任務；整個陣列一起覆寫（順序即顯示順序）'}),
+    .openapi({description: '子任务；整个数组一起覆盖（顺序即显示顺序）'}),
   links: z
     .array(linkInputSchema)
     .max(50)
-    .openapi({description: '相關連結（網址、mailto、tel）'}),
+    .openapi({description: '相关链接（网址、mailto、tel）'}),
   recurrence: recurrenceSchema.nullable(),
   myDay: dateSchema.nullable().openapi({
-    description: '加入「我的一天」的日期；只在該日顯示於 My Day',
+    description: '加入“我的一天”的日期；只在该日显示于 My Day',
   }),
   myDayOrder: z
     .number()
     .nullable()
-    .openapi({description: 'My Day 內排序（小在前）'}),
+    .openapi({description: 'My Day 内排序（小在前）'}),
   sortOrder: z
     .number()
-    .openapi({description: '清單內排序（小在前）；插入時取前後兩者中點'}),
+    .openapi({description: '清单内排序（小在前）；插入时取前后两者中点'}),
   completedAt: isoDateTimeSchema.nullable().openapi({
-    description: '完成時刻；null = 未完成。完成重複任務時伺服器會產生下一期',
+    description: '完成时刻；null = 未完成。完成重复任务时服务器会生成下一期',
   }),
 };
 
@@ -186,7 +186,7 @@ const listFields = {
     .string()
     .max(32)
     .nullable()
-    .openapi({description: 'emoji 或圖示名稱'}),
+    .openapi({description: 'emoji 或图标名称'}),
   folderId: idSchema.nullable(),
   sortOrder: z.number(),
   archived: z.boolean(),
@@ -221,8 +221,8 @@ const tagFields = {
     .trim()
     .min(1)
     .max(32)
-    .regex(/^[^\s#@]+$/, '標籤名稱不可含空白、# 或 @')
-    .openapi({example: '電腦前'}),
+    .regex(/^[^\s#@]+$/, '标签名称不能含空白、# 或 @')
+    .openapi({example: '电脑前'}),
   color: colorSchema.nullable(),
 };
 export const tagPatchSchema = z
@@ -239,18 +239,18 @@ export const settingsPatchSchema = z
   .strictObject({
     timezone: z
       .string()
-      .refine(isValidTimeZone, '不是有效的 IANA 時區')
-      .openapi({example: 'Asia/Taipei'}),
+      .refine(isValidTimeZone, '不是有效的 IANA 时区')
+      .openapi({example: 'Asia/Shanghai'}),
     weekStart: z
       .union([z.literal(0), z.literal(1)])
-      .openapi({description: '0 = 週日開始，1 = 週一開始'}),
+      .openapi({description: '0 = 周日开始，1 = 周一开始'}),
     defaultReminderTime: timeSchema.openapi({
-      description: '只有日期的任務，客戶端建議的預設提醒時間',
+      description: '只有日期的任务，客户端建议的默认提醒时间',
     }),
     todayIncludesOverdue: z
       .boolean()
-      .openapi({description: '今日視圖是否列出逾期任務'}),
-    locale: z.string().min(2).max(16).openapi({example: 'zh-TW'}),
+      .openapi({description: '今日视图是否列出逾期任务'}),
+    locale: z.string().min(2).max(16).openapi({example: 'zh-CN'}),
   })
   .partial()
   .openapi('SettingsPatch');
@@ -265,13 +265,13 @@ export const PATCH_SCHEMAS = {
 
 const systemFields = {
   id: idSchema,
-  rev: z.int().openapi({description: '每次變更 +1'}),
+  rev: z.int().openapi({description: '每次变更 +1'}),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema.openapi({
-    description: '伺服器最後變更時間（同一使用者內嚴格遞增）',
+    description: '服务器最后变更时间（同一用户内严格递增）',
   }),
   deletedAt: isoDateTimeSchema.nullable().openapi({
-    description: '非 null 表示在垃圾桶（30 天後永久刪除）',
+    description: '非 null 表示在回收站（30 天后永久删除）',
   }),
 };
 
@@ -319,7 +319,7 @@ export const taskSchema = z
     dueTime: timeSchema.nullable(),
     dueAt: isoDateTimeSchema.nullable().openapi({
       description:
-        '唯讀：dueDate+dueTime 依使用者時區換算的時刻；全天任務為 null',
+        '只读：dueDate+dueTime 按用户时区换算的时刻；全天任务为 null',
     }),
     reminders: z.array(reminderSchema),
     estimateMinutes: z.int().nullable(),
@@ -328,10 +328,10 @@ export const taskSchema = z
     links: z.array(linkSchema),
     attachments: z
       .array(attachmentSchema)
-      .openapi({description: '唯讀：檔案附件，透過 /attachments API 管理'}),
+      .openapi({description: '只读：文件附件，通过 /attachments API 管理'}),
     recurrence: recurrenceRuleSchema.nullable(),
     seriesId: idSchema.nullable().openapi({
-      description: '唯讀：同一重複系列共用的 id',
+      description: '只读：同一重复系列共用的 id',
     }),
     myDay: dateSchema.nullable(),
     myDayOrder: z.number().nullable(),
@@ -392,14 +392,14 @@ export const mutationSchema = z
     z.strictObject({
       op: z.literal('upsert'),
       type: kindSchema,
-      id: idSchema.openapi({description: 'settings 固定為 "main"'}),
+      id: idSchema.openapi({description: 'settings 固定为 "main"'}),
       data: z.record(z.string(), z.unknown()).openapi({
         description:
-          '依 type 套用 TaskPatch / ListPatch / FolderPatch / TagPatch / SettingsPatch；實體不存在時視為建立（需含必填欄位）',
+          '按 type 应用 TaskPatch / ListPatch / FolderPatch / TagPatch / SettingsPatch；实体不存在时视为创建（需含必填字段）',
       }),
       at: z.int().min(0).optional().openapi({
         description:
-          '使用者實際編輯時間（epoch ms）；用於逐欄位 LWW。省略 = 伺服器現在',
+          '用户实际编辑时间（epoch ms）；用于逐字段 LWW。省略 = 服务器当前时间',
       }),
     }),
     z.strictObject({
@@ -427,31 +427,31 @@ export const entitySchema: z.ZodType<ApiEntity> = z.union([
 
 export const mutationResultSchema = z
   .object({
-    index: z.int().openapi({description: '對應請求 mutations 陣列的索引'}),
+    index: z.int().openapi({description: '对应请求 mutations 数组的索引'}),
     type: kindSchema,
     id: idSchema,
     op: z.enum(['upsert', 'delete', 'restore']),
     status: z.enum(['applied', 'noop', 'rejected']).openapi({
       description:
-        'applied 已套用；noop 無變化（已是最新或欄位較舊）；rejected 被拒絕（看 error）',
+        'applied 已应用；noop 无变化（已是最新或字段较旧）；rejected 被拒绝（看 error）',
     }),
     entity: entitySchema.nullable().openapi({
-      description: '伺服器上的最新狀態；客戶端應以此覆蓋本地',
+      description: '服务器上的最新状态；客户端应以此覆盖本地',
     }),
     spawned: z
       .array(taskEntitySchema)
-      .openapi({description: '完成重複任務時產生的下一期'}),
+      .openapi({description: '完成重复任务时生成的下一期'}),
     error: z
       .object({
         code: z.string(),
         message: z.string(),
         status: z
           .int()
-          .openapi({description: '若用 REST 會得到的 HTTP 狀態碼'}),
+          .openapi({description: '若用 REST 会得到的 HTTP 状态码'}),
         retryAfter: z
           .int()
           .optional()
-          .openapi({description: 'quota_exceeded 時：幾秒後配額重置'}),
+          .openapi({description: 'quota_exceeded 时：几秒后配额重置'}),
       })
       .nullable(),
   })

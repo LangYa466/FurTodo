@@ -37,7 +37,7 @@ const parsedCaptureSchema = z
         }),
       )
       .openapi({
-        description: '被辨識的片段（UTF-16 位移），可用來在輸入框標示顏色',
+        description: '被识别的片段（UTF-16 偏移量），可用于在输入框标记颜色',
       }),
     warnings: z.array(z.string()),
   })
@@ -47,17 +47,17 @@ const captureResultSchema = z
   .object({
     task: taskEntitySchema
       .nullable()
-      .openapi({description: 'dryRun 時為 null'}),
+      .openapi({description: 'dryRun 时为 null'}),
     createdTags: z
       .array(tagEntitySchema)
-      .openapi({description: '自動建立的新標籤'}),
+      .openapi({description: '自动创建的新标签'}),
     parsed: parsedCaptureSchema,
     resolved: z.object({
       listId: idSchema.nullable(),
       tagIds: z.array(idSchema),
       newTags: z
         .array(z.string())
-        .openapi({description: '尚不存在、建立時會自動新增的標籤名稱'}),
+        .openapi({description: '尚不存在、创建时会自动添加的标签名称'}),
     }),
     warnings: z.array(z.string()),
   })
@@ -92,9 +92,9 @@ export function registerCaptureRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'post',
       path: '/v1/capture',
       tags: ['Capture'],
-      summary: '快速收集：一行文字建立任務',
+      summary: '快速收集：一行文字创建任务',
       description:
-        '例：`明天下午3點 打電話給王先生確認報價 #電腦前 @工作 !高 ~15m`。語法：#標籤（不存在自動建立）、@清單（比對名稱）、!1-3/!低中高/!q1-q4、~15m/~1h（預估）、%低/%中/%高（精力）、*每天/*每週一三五/*每月15號/*完成後3天（重複）、今天/明天/下週一/11月30日/2026-12-25/3pm/下午三點半（日期時間）。dryRun=true 只解析不建立，可用來即時預覽。',
+        '例：`明天下午3点 给王先生打电话确认报价 #电脑前 @工作 !高 ~15m`。语法：#标签（不存在时自动创建）、@清单（比对名称）、!1-3/!低中高/!q1-q4、~15m/~1h（预估）、%低/%中/%高（精力）、*每天/*每周一三五/*每月15号/*完成后3天（重复）、今天/明天/下周一/11月30日/2026-12-25/3pm/下午三点半（日期时间）。dryRun=true 只解析不创建，可用于实时预览。',
       security: BEARER_SECURITY,
       request: {
         body: {
@@ -105,16 +105,16 @@ export function registerCaptureRoutes(app: OpenAPIHono<AppEnv>): void {
                 listId: idSchema
                   .nullable()
                   .optional()
-                  .openapi({description: '指定清單（優先於 @清單）'}),
+                  .openapi({description: '指定清单（优先于 @清单）'}),
                 myDay: z
                   .boolean()
                   .default(false)
-                  .openapi({description: '同時加入今天的 My Day'}),
+                  .openapi({description: '同时加入今天的 My Day'}),
                 dryRun: z.boolean().default(false),
                 parse: z
                   .boolean()
                   .default(true)
-                  .openapi({description: 'false = 整段文字直接當標題'}),
+                  .openapi({description: 'false = 整段文字直接作为标题'}),
               }),
             },
           },
@@ -122,8 +122,8 @@ export function registerCaptureRoutes(app: OpenAPIHono<AppEnv>): void {
         },
       },
       responses: {
-        200: jsonContent(captureResultSchema, 'dryRun 預覽'),
-        201: jsonContent(captureResultSchema, '已建立'),
+        200: jsonContent(captureResultSchema, 'dryRun 预览'),
+        201: jsonContent(captureResultSchema, '已创建'),
         ...errorResponses(400, 401, 403, 429),
       },
     }),
@@ -142,7 +142,7 @@ export function registerCaptureRoutes(app: OpenAPIHono<AppEnv>): void {
           })
         : unparsedCapture(body.text);
       if (!parsed.title) {
-        throw new AppError(400, 'validation_error', '解析後沒有剩下任務標題', {
+        throw new AppError(400, 'validation_error', '解析后没有剩余任务标题', {
           warnings: parsed.warnings,
         });
       }
@@ -247,7 +247,7 @@ export function registerCaptureRoutes(app: OpenAPIHono<AppEnv>): void {
         throw new AppError(status, code, message);
       }
       if (!taskOutcome?.entity) {
-        throw new AppError(500, 'internal_error', 'capture 沒有建立任務');
+        throw new AppError(500, 'internal_error', 'capture 没有创建任务');
       }
       const createdTags: ApiEntity[] = outcomes
         .slice(0, -1)
