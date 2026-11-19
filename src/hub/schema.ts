@@ -5,16 +5,10 @@ import {
   sqliteTable,
   text,
 } from 'drizzle-orm/sqlite-core';
-import type {GithubProfile, OrgSummary} from '../auth/github';
+import type {GithubProfile} from '../auth/github';
 import type {QuotaCounts} from '../config';
 import type {EntityMetadata, Settings} from '../domain/model';
 import type {SessionKind} from './types';
-
-/** Roles and provenance of a verified org membership. */
-export interface StoredMembership {
-  role: 'admin' | 'member';
-  via: 'user_token' | 'org_token';
-}
 
 /**
  * Single row (`id = 'main'`) holding the account state, replacing one key-value
@@ -24,11 +18,8 @@ export const account = sqliteTable('account', {
   id: text('id').primaryKey(),
   userId: text('user_id').notNull(),
   profile: text('profile', {mode: 'json'}).$type<GithubProfile>().notNull(),
-  orgs: text('orgs', {mode: 'json'}).$type<OrgSummary[]>().notNull(),
-  membership: text('membership', {mode: 'json'})
-    .$type<StoredMembership>()
-    .notNull(),
-  membershipVerifiedAt: integer('membership_verified_at').notNull(),
+  /** Last time GitHub confirmed the account age; ages only grow. */
+  eligibilityCheckedAt: integer('eligibility_checked_at').notNull(),
   /** GitHub OAuth token, sealed with AES-GCM. */
   sealedGithubToken: text('sealed_github_token').notNull(),
   settings: text('settings', {mode: 'json'}).$type<Settings>().notNull(),

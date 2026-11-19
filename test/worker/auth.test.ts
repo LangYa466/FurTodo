@@ -1,50 +1,49 @@
 import {beforeAll, describe, expect, it} from 'vitest';
 import {
   CLIENT_REDIRECT,
+  OLD_ENOUGH_DAYS,
+  TOO_NEW_DAYS,
   api,
   apiJson,
   authorizeAndCallback,
   installFetchMock,
   login,
   pkcePair,
-  type MembershipMock,
 } from './helpers';
 
 beforeAll(() => installFetchMock());
 
 describe('GitHub OAuth + PKCE', () => {
-  it('logs in an org member (private membership) and returns profile, org list and settings', async () => {
-    const token = await login(1001, 'alice', 'admin');
+  it('logs in an account older than a year and reports its age', async () => {
+    const token = await login(1001, 'alice', OLD_ENOUGH_DAYS);
     expect(token).toMatch(/^ftk_1001\./);
     const {status, body} = await apiJson<{
-      user: {login: string};
-      membership: {role: string; org: string};
-      orgs: Array<{login: string}>;
+      user: {login: string; createdAt: string};
+      eligibility: {
+        minAccountAgeDays: number;
+        accountAgeDays: number;
+        checkedAt: string;
+      };
     }>('/v1/me', {token});
     expect(status).toBe(200);
     expect(body.user.login).toBe('alice');
-    expect(body.membership).toMatchObject({org: 'FurDevsCN', role: 'admin'});
-    expect(body.orgs.map(o => o.login)).toContain('FurDevsCN');
+    expect(body.user.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(body.eligibility.minAccountAgeDays).toBe(365);
+    expect(body.eligibility.accountAgeDays).toBeGreaterThanOrEqual(365);
   });
 
-  it('rejects non-members, pending invitations and restricted orgs with an OAuth-style redirect error', async () => {
+  it('rejects accounts younger than a year with account_too_new', async () => {
     const {challenge} = await pkcePair();
-    const cases: Array<[MembershipMock, string]> = [
-      ['none', 'not_org_member'],
-      ['pending', 'org_membership_pending'],
-      ['restricted', 'org_access_restricted'],
-    ];
-    for (const [membership, error] of cases) {
-      const back = await authorizeAndCallback(
-        {id: 2000, login: 'mallory', membership},
-        challenge,
-        's-1',
-      );
-      expect(`${back.origin}${back.pathname}`).toBe(CLIENT_REDIRECT);
-      expect(back.searchParams.get('error')).toBe(error);
-      expect(back.searchParams.get('state')).toBe('s-1');
-      expect(back.searchParams.get('code')).toBeNull();
-    }
+    const back = await authorizeAndCallback(
+      {id: 2000, login: 'newbie', accountAgeDays: TOO_NEW_DAYS},
+      challenge,
+      's-1',
+    );
+    expect(`${back.origin}${back.pathname}`).toBe(CLIENT_REDIRECT);
+    expect(back.searchParams.get('error')).toBe('account_too_new');
+    expect(back.searchParams.get('error_description')).toContain('365');
+    expect(back.searchParams.get('state')).toBe('s-1');
+    expect(back.searchParams.get('code')).toBeNull();
   });
 
   it('refuses redirect URIs outside the allowlist without redirecting', async () => {
@@ -68,7 +67,7 @@ describe('GitHub OAuth + PKCE', () => {
   it('login code is single-use and bound to the PKCE verifier and redirect_uri', async () => {
     const {verifier, challenge} = await pkcePair();
     const back = await authorizeAndCallback(
-      {id: 1002, login: 'bob', membership: 'active'},
+      {id: 1002, login: 'bob', accountAgeDays: OLD_ENOUGH_DAYS},
       challenge,
     );
     const code = back.searchParams.get('code');

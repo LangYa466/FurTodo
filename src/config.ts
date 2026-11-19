@@ -6,7 +6,7 @@ export type QuotaCounts = Record<QuotaKind, number>;
 
 export interface AppConfig {
   publicBaseUrl: string;
-  githubOrg: string;
+  minAccountAgeDays: number;
   githubApiBase: string;
   githubOAuthBase: string;
   allowedRedirects: string[];
@@ -44,7 +44,10 @@ export function readConfig(env: Env): AppConfig {
   }
   return {
     publicBaseUrl: trimTrailingSlashes(env.PUBLIC_BASE_URL),
-    githubOrg: env.GITHUB_ORG,
+    minAccountAgeDays: parsePositiveInt(
+      'MIN_ACCOUNT_AGE_DAYS',
+      env.MIN_ACCOUNT_AGE_DAYS,
+    ),
     githubApiBase: trimTrailingSlashes(env.GITHUB_API_BASE),
     githubOAuthBase: trimTrailingSlashes(env.GITHUB_OAUTH_BASE),
     allowedRedirects: env.ALLOWED_REDIRECT_URIS.split(',')

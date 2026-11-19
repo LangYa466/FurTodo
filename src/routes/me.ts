@@ -34,7 +34,7 @@ export function registerMeRoutes(app: OpenAPIHono<AppEnv>): void {
       method: 'get',
       path: '/v1/me',
       tags: ['Account'],
-      summary: '当前用户、组织成员身份、GitHub 组织清单、设置',
+      summary: '当前用户、GitHub 账号状态、设置',
       security: BEARER_SECURITY,
       responses: {
         200: jsonContent(accountSchema, '用户信息'),

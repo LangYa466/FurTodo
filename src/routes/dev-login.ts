@@ -54,7 +54,7 @@ export function devLoginPage(nonce: string): string {
   <body>
     <h1>FurTodo 开发者登录</h1>
     <p class="muted">
-      用 GitHub 登录（必须是 FurDevsCN 组织成员）获取 access token 来测试 API。
+      用 GitHub 登录（账号需创建满一年）获取 access token 来测试 API。
       API 文档：<a href="/docs">/docs</a> ·
       OpenAPI：<a href="/openapi.json">/openapi.json</a> ·
       对接说明：<a href="/integration.md">/integration.md</a>
@@ -161,7 +161,7 @@ export function devLoginPage(nonce: string): string {
             renderLogin();
           },
         });
-        const membership = session.membership;
+        const eligibility = session.eligibility;
         show(
           element(
             'p',
@@ -169,7 +169,8 @@ export function devLoginPage(nonce: string): string {
             element('img', {src: user.avatarUrl, width: 32, height: 32, alt: ''}),
             ' ',
             element('strong', {textContent: user.login}),
-            ' · ' + membership.org + ' ' + membership.role,
+            ' · 账号 ' + eligibility.accountAgeDays + ' 天（需满 ' +
+              eligibility.minAccountAgeDays + ' 天）',
           ),
           tokenBox('Access token（30 天滑动有效）', token),
           element('pre', {

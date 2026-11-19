@@ -1,8 +1,7 @@
 import {createRoute, z, type OpenAPIHono} from '@hono/zod-openapi';
 import {
-  checkMembership,
+  accountAgeDays,
   exchangeCode,
-  fetchOrgs,
   fetchProfile,
   type GithubProfile,
 } from '../auth/github';
@@ -26,7 +25,6 @@ const GITHUB_VERIFIER_BYTES = 32;
 const DEFAULT_TOKEN_DAYS = 90;
 const USER_AGENT_MAX_LENGTH = 200;
 const RATE_LIMIT_RETRY_SECONDS = 60;
-const ORG_READ_SCOPES = ['read:org', 'write:org', 'admin:org'];
 
 /**
  * Login context sealed into GitHub's `state` parameter, so the server keeps
@@ -49,11 +47,9 @@ const githubUserSchema = z
     login: z.string(),
     name: z.string().nullable(),
     avatarUrl: z.string(),
+    createdAt: z.string().openapi({description: 'GitHub 账号创建时间'}),
   })
   .openapi('GithubUser');
-const githubOrgSchema = z
-  .object({login: z.string(), avatarUrl: z.string()})
-  .openapi('GithubOrg');
 export const sessionSchema = z
   .object({
     id: z.string(),
@@ -73,17 +69,15 @@ export const sessionSchema = z
 export const accountSchema = z
   .object({
     user: githubUserSchema,
-    membership: z.object({
-      org: z.string().openapi({example: 'FurDevsCN'}),
-      role: z.enum(['admin', 'member']),
-      via: z.enum(['user_token', 'org_token']),
-      verifiedAt: z.string().openapi({
-        description: '上次向 GitHub 确认成员身份的时间（每 6 小时重验）',
+    eligibility: z.object({
+      minAccountAgeDays: z
+        .int()
+        .openapi({description: '使用本 API 所需的最小 GitHub 账号年龄（天）'}),
+      accountAgeDays: z.int().openapi({description: '当前账号年龄（天）'}),
+      checkedAt: z.string().openapi({
+        description: '上次向 GitHub 确认账号状态的时间（每 6 小时重验）',
       }),
     }),
-    orgs: z
-      .array(githubOrgSchema)
-      .openapi({description: '用户所属的 GitHub 组织（含私有成员身份）'}),
     session: sessionSchema,
     settings: settingsEntitySchema,
   })
@@ -178,7 +172,7 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
         'redirect_uri',
         `${config.publicBaseUrl}/v1/auth/github/callback`,
       );
-      url.searchParams.set('scope', 'read:org');
+      url.searchParams.set('scope', 'read:user');
       url.searchParams.set(
         'state',
         await sealJson(c.env.TOKEN_SECRET, 'state-aes', state),
@@ -267,58 +261,28 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
           error_description: exchange.error,
         });
       }
-      if (!exchange.scopes.some(scope => ORG_READ_SCOPES.includes(scope))) {
-        return redirectToClient({
-          error: 'insufficient_scope',
-          error_description: '需要 read:org 权限才能确认组织成员身份',
-        });
-      }
-      let profile: GithubProfile;
-      try {
-        profile = await fetchProfile(config, exchange.accessToken);
-      } catch (error: unknown) {
+      const profileResult = await fetchProfile(config, exchange.accessToken);
+      if (profileResult.status !== 'ok') {
         return redirectToClient({
           error: 'github_error',
-          error_description: String(error),
+          error_description:
+            profileResult.status === 'token_invalid'
+              ? 'GitHub 拒绝了刚签发的 token，请重新登录'
+              : `无法读取 GitHub 账号：${profileResult.detail}`,
         });
       }
-      const membership = await checkMembership(
-        config,
-        exchange.accessToken,
-        profile.login,
-        c.env.GITHUB_ORG_TOKEN,
-      );
-      const org = config.githubOrg;
-      switch (membership.status) {
-        case 'active':
-          break;
-        case 'pending':
-          return redirectToClient({
-            error: 'org_membership_pending',
-            error_description: `请先到 GitHub 接受 ${org} 的组织邀请`,
-          });
-        case 'not_member':
-          return redirectToClient({
-            error: 'not_org_member',
-            error_description: `${profile.login} 不是 ${org} 成员。若你确定是成员，可能是组织启用了 OAuth App 访问限制：请在 GitHub 授权页对 ${org} 点击 Request/Grant，或请 owner 批准本应用`,
-          });
-        case 'restricted':
-          return redirectToClient({
-            error: 'org_access_restricted',
-            error_description: `${org} 启用了 OAuth App 访问限制，请组织 owner 批准本应用后再登录`,
-          });
-        default:
-          return redirectToClient({
-            error: 'github_error',
-            error_description: '无法向 GitHub 确认组织成员身份，请稍后再试',
-          });
+      const profile: GithubProfile = profileResult.profile;
+      const ageDays = accountAgeDays(profile.createdAt);
+      if (ageDays < config.minAccountAgeDays) {
+        return redirectToClient({
+          error: 'account_too_new',
+          error_description: `GitHub 账号创建需满 ${config.minAccountAgeDays} 天（当前 ${ageDays} 天，创建于 ${profile.createdAt.slice(0, 10)}）`,
+        });
       }
       const userId = String(profile.id);
       const created = await hubFor(c.env, userId).createPendingSession({
         userId,
         profile,
-        orgs: await fetchOrgs(config, exchange.accessToken),
-        membership: {role: membership.role, via: membership.via},
         githubToken: exchange.accessToken,
         codeChallenge: state.codeChallenge,
         redirectUri: state.redirectUri,
@@ -465,7 +429,7 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
       tags: ['Auth'],
       summary: '创建个人访问 token（供 CLI、脚本、AI agent 测试用）',
       description:
-        'token 只在创建时返回一次。同样受组织成员重验与每日配额限制。',
+        'token 只在创建时返回一次。同样受 GitHub 账号状态重验与每日配额限制。',
       security: BEARER_SECURITY,
       request: {
         body: {

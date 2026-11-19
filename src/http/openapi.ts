@@ -18,7 +18,7 @@ export function jsonContent<T extends z.ZodType>(
 const ERROR_DESCRIPTIONS = {
   400: '请求格式错误（validation_error / bad_request）',
   401: '未登录或 token 无效（invalid_token / session_expired）',
-  403: '不是组织成员或超过总量上限（not_org_member / org_access_restricted / limit_exceeded）',
+  403: 'GitHub 账号未满一年或超过总量上限（account_too_new / limit_exceeded）',
   404: '未找到（not_found）',
   409: '状态冲突（deleted / limit_exceeded）',
   413: '文件太大（payload_too_large）',

@@ -7,11 +7,7 @@ import {
 import {migrate} from 'drizzle-orm/durable-sqlite/migrator';
 import type {SQLiteTable} from 'drizzle-orm/sqlite-core';
 import migrations from '../../drizzle/migrations';
-import {
-  checkMembership,
-  type GithubProfile,
-  type OrgSummary,
-} from '../auth/github';
+import {accountAgeDays, fetchProfile, type GithubProfile} from '../auth/github';
 import {
   readConfig,
   type AppConfig,
@@ -81,7 +77,6 @@ import {
   type PushSubscriptionRow,
   type ReminderPayload,
   type SessionRow,
-  type StoredMembership,
 } from './schema';
 import type {
   AccountView,
@@ -117,9 +112,9 @@ const SESSION_TTL_MS = 30 * DAY_MS;
 /** Sessions record their last use at most once per hour. */
 const SESSION_TOUCH_MS = HOUR_MS;
 const LOGIN_CODE_TTL_MS = 5 * MINUTE_MS;
-const MEMBERSHIP_RECHECK_MS = 6 * HOUR_MS;
-/** How long requests continue while GitHub cannot confirm membership. */
-const MEMBERSHIP_GRACE_MS = 72 * HOUR_MS;
+const ELIGIBILITY_RECHECK_MS = 6 * HOUR_MS;
+/** How long requests continue while GitHub cannot be reached. */
+const ELIGIBILITY_GRACE_MS = 72 * HOUR_MS;
 const PRUNE_INTERVAL_MS = HOUR_MS;
 const USAGE_HISTORY_DAYS = 14;
 const MAX_SESSIONS = 50;
@@ -147,9 +142,7 @@ type Database = DrizzleSqliteDODatabase;
 interface AccountState {
   userId: string;
   profile: GithubProfile;
-  orgs: OrgSummary[];
-  membership: StoredMembership;
-  membershipVerifiedAt: number;
+  eligibilityCheckedAt: number;
   sealedGithubToken: string;
   settings: Settings;
   /** Highest stamp persisted to KV and the journal; readers stop here. */
@@ -158,7 +151,7 @@ interface AccountState {
   prunedAt: number;
 }
 
-type MembershipCheck = 'ok' | 'revoked' | 'restricted' | 'unavailable';
+type EligibilityCheck = 'ok' | 'revoked' | 'unavailable';
 
 interface JournalSelection {
   journal: RawJournalEntry[];
@@ -235,7 +228,7 @@ function unsavedSettingsEntity(settings: Settings): ApiEntity {
 /**
  * Per-user Durable Object, addressed by `idFromName(githubUserId)`.
  *
- * - Control plane: sessions, the daily quota ledger, org membership rechecks,
+ * - Control plane: sessions, the daily quota ledger, GitHub eligibility rechecks,
  *   Web Push subscriptions, reminder alarms, and background jobs.
  * - Serializes every entity write to KV and keeps a short journal that readers
  *   overlay on KV to hide its eventual consistency.
@@ -253,8 +246,8 @@ export class UserHub extends DurableObject<Env> {
   private readonly entityCache = new Map<string, StoredEntity>();
   /** Tail of the write queue; see `serialized`. */
   private writeQueue: Promise<unknown> = Promise.resolve();
-  /** In-flight GitHub membership check shared by concurrent requests. */
-  private membershipCheck: Promise<MembershipCheck> | null = null;
+  /** In-flight GitHub eligibility check shared by concurrent requests. */
+  private eligibilityCheck: Promise<EligibilityCheck> | null = null;
   private readonly quotaCharger: QuotaCharger = {
     charge: (kind, count) => {
       this.consumeQuota(kind, count, Date.now());
@@ -291,9 +284,7 @@ export class UserHub extends DurableObject<Env> {
       this.accountState = {
         userId: input.userId,
         profile: input.profile,
-        orgs: input.orgs,
-        membership: input.membership,
-        membershipVerifiedAt: now,
+        eligibilityCheckedAt: now,
         sealedGithubToken: await sealJson(
           this.env.TOKEN_SECRET,
           'ghtoken-aes',
@@ -658,9 +649,7 @@ export class UserHub extends DurableObject<Env> {
     return {
       userId: row.userId,
       profile: row.profile,
-      orgs: row.orgs,
-      membership: row.membership,
-      membershipVerifiedAt: row.membershipVerifiedAt,
+      eligibilityCheckedAt: row.eligibilityCheckedAt,
       sealedGithubToken: row.sealedGithubToken,
       settings: row.settings,
       committedStamp: row.committedStamp,
@@ -680,7 +669,7 @@ export class UserHub extends DurableObject<Env> {
   }
 
   /**
-   * Checks that the session is active, rechecks org membership when due,
+   * Checks that the session is active, re-verifies the GitHub token when due,
    * charges one request, and slides the session expiry at most hourly.
    */
   private async authorize(sessionId: string, now: number): Promise<void> {
@@ -692,7 +681,7 @@ export class UserHub extends DurableObject<Env> {
       this.deleteSession(sessionId);
       fail(401, 'session_expired', 'Session 已过期，请重新登录');
     }
-    await this.ensureMembership(now);
+    await this.ensureEligibility(now);
     this.consumeQuota('requests', 1, now);
     if (now - session.lastUsedAt > SESSION_TOUCH_MS) {
       // Personal tokens keep their fixed expiry; login sessions slide.
@@ -707,40 +696,27 @@ export class UserHub extends DurableObject<Env> {
   }
 
   /**
-   * Rechecks org membership every 6 hours. Revoked members lose every
-   * session; while GitHub is unreachable, requests continue for a grace period.
+   * Re-verifies the GitHub token every 6 hours. Account age only grows, so the
+   * gate itself never reopens; this catches tokens the user revoked. While
+   * GitHub is unreachable, requests continue for a grace period.
    */
-  private async ensureMembership(now: number): Promise<void> {
-    const verifiedAt = this.accountState?.membershipVerifiedAt ?? 0;
-    if (now - verifiedAt < MEMBERSHIP_RECHECK_MS) return;
-    this.membershipCheck ??= this.recheckMembership().finally(() => {
-      this.membershipCheck = null;
+  private async ensureEligibility(now: number): Promise<void> {
+    const checkedAt = this.accountState?.eligibilityCheckedAt ?? 0;
+    if (now - checkedAt < ELIGIBILITY_RECHECK_MS) return;
+    this.eligibilityCheck ??= this.recheckEligibility().finally(() => {
+      this.eligibilityCheck = null;
     });
-    const outcome = await this.membershipCheck;
-    const org = this.config.githubOrg;
-    switch (outcome) {
-      case 'ok':
-        return;
-      case 'revoked':
-        return fail(
-          403,
-          'not_org_member',
-          `你已不是 ${org} 组织成员，或已撤销 GitHub 授权；请重新登录`,
-        );
-      case 'restricted':
-        return fail(
-          403,
-          'org_access_restricted',
-          `${org} 启用了 OAuth App 访问限制，请组织 owner 批准本应用`,
-        );
-      default:
-        if (now - verifiedAt > MEMBERSHIP_GRACE_MS) {
-          fail(503, 'github_unavailable', '暂时无法向 GitHub 验证组织成员身份');
-        }
+    const outcome = await this.eligibilityCheck;
+    if (outcome === 'ok') return;
+    if (outcome === 'revoked') {
+      fail(401, 'invalid_token', 'GitHub 授权已失效，请重新登录');
+    }
+    if (now - checkedAt > ELIGIBILITY_GRACE_MS) {
+      fail(503, 'github_unavailable', '暂时无法向 GitHub 验证账号状态');
     }
   }
 
-  private async recheckMembership(): Promise<MembershipCheck> {
+  private async recheckEligibility(): Promise<EligibilityCheck> {
     const state = this.accountState;
     const token = state
       ? await openJson<string>(
@@ -753,24 +729,16 @@ export class UserHub extends DurableObject<Env> {
       this.revokeAllSessions();
       return 'revoked';
     }
-    const result = await checkMembership(
-      this.config,
-      token,
-      state.profile.login,
-      this.env.GITHUB_ORG_TOKEN,
-    );
+    const result = await fetchProfile(this.config, token);
     switch (result.status) {
-      case 'active':
-        state.membershipVerifiedAt = Date.now();
-        state.membership = {role: result.role, via: result.via};
+      case 'ok':
+        state.eligibilityCheckedAt = Date.now();
         this.saveAccount();
         return 'ok';
-      case 'restricted':
-        return 'restricted';
       case 'unavailable':
         console.warn(
           JSON.stringify({
-            msg: 'membership recheck unavailable',
+            msg: 'eligibility recheck unavailable',
             userId: state.userId,
             detail: result.detail,
           }),
@@ -779,9 +747,8 @@ export class UserHub extends DurableObject<Env> {
       default:
         console.log(
           JSON.stringify({
-            msg: 'membership revoked',
+            msg: 'github token revoked',
             userId: state.userId,
-            status: result.status,
           }),
         );
         this.revokeAllSessions();
@@ -892,12 +859,11 @@ export class UserHub extends DurableObject<Env> {
     );
     return {
       user: state.profile,
-      membership: {
-        org: this.config.githubOrg,
-        ...state.membership,
-        verifiedAt: new Date(state.membershipVerifiedAt).toISOString(),
+      eligibility: {
+        minAccountAgeDays: this.config.minAccountAgeDays,
+        accountAgeDays: accountAgeDays(state.profile.createdAt),
+        checkedAt: new Date(state.eligibilityCheckedAt).toISOString(),
       },
-      orgs: state.orgs,
       session: toSessionView(session, sessionId),
       settings: settingsEntity
         ? this.toApi(settingsEntity)

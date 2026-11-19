@@ -2,12 +2,7 @@
 // Durable Object boundary, so it must stay structured-clone friendly.
 
 import type {ContentfulStatusCode} from 'hono/utils/http-status';
-import type {
-  GithubProfile,
-  MembershipSource,
-  OrgRole,
-  OrgSummary,
-} from '../auth/github';
+import type {GithubProfile} from '../auth/github';
 import type {QuotaCounts} from '../config';
 import type {ApiEntity, Kind, RawJournalEntry, Settings} from '../domain/model';
 import type {ErrorCode} from '../lib/errors';
@@ -27,17 +22,18 @@ export interface SessionView {
   current: boolean;
 }
 
-export interface MembershipView {
-  org: string;
-  role: OrgRole;
-  via: MembershipSource;
-  verifiedAt: string;
+export interface EligibilityView {
+  /** Minimum account age in days the API requires. */
+  minAccountAgeDays: number;
+  /** Age of the signed-in GitHub account in whole days. */
+  accountAgeDays: number;
+  /** When the hub last confirmed the age with GitHub. */
+  checkedAt: string;
 }
 
 export interface AccountView {
   user: GithubProfile;
-  membership: MembershipView;
-  orgs: OrgSummary[];
+  eligibility: EligibilityView;
   session: SessionView;
   settings: ApiEntity;
 }
@@ -59,8 +55,6 @@ export interface UsageView {
 export interface PendingSessionInput {
   userId: string;
   profile: GithubProfile;
-  orgs: OrgSummary[];
-  membership: {role: OrgRole; via: MembershipSource};
   githubToken: string;
   codeChallenge: string;
   redirectUri: string;

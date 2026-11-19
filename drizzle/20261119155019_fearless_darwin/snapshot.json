@@ -1,7 +1,7 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "id": "d2beba72-b3e2-44d4-8343-e999ae72846b",
+  "id": "ac1856e0-6997-491d-bfa5-ea9e2be57907",
   "prevIds": [
     "00000000-0000-0000-0000-000000000000"
   ],
@@ -66,27 +66,7 @@
     },
     {
       "table": "account",
-      "name": "orgs",
-      "type": "text",
-      "notNull": true,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
-      "entityType": "columns"
-    },
-    {
-      "table": "account",
-      "name": "membership",
-      "type": "text",
-      "notNull": true,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
-      "entityType": "columns"
-    },
-    {
-      "table": "account",
-      "name": "membership_verified_at",
+      "name": "eligibility_checked_at",
       "type": "integer",
       "notNull": true,
       "autoincrement": false,

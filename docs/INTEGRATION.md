@@ -11,7 +11,7 @@
 | OpenAPI | `https://todo.example.com/openapi.json` |
 | 交互文档（可直接在线调试 API） | `https://todo.example.com/docs` |
 | 开发者登录／获取 token | `https://todo.example.com/dev/login` |
-| 登录方式 | GitHub OAuth（只限 GitHub 组织 **FurDevsCN** 成员，私有成员身份也可以） |
+| 登录方式 | GitHub OAuth；要求 **GitHub 账号创建满一年**（`MIN_ACCOUNT_AGE_DAYS` = 365，不看组织） |
 | 认证 | `Authorization: Bearer ftk_...`（不使用 cookie） |
 | CORS | 任何 origin；允许 `Authorization`、`Content-Type` header |
 | 日期 | `YYYY-MM-DD`（日历日，不含时区） |
@@ -57,18 +57,17 @@ sequenceDiagram
   participant G as GitHub
   C->>C: 生成 code_verifier、state，算 code_challenge = BASE64URL(SHA256(verifier))
   C->>S: 打开浏览器 GET /v1/auth/github/authorize?redirect_uri&code_challenge&code_challenge_method=S256&state
-  S->>G: 302 到 GitHub 授权页（scope = read:org）
+  S->>G: 302 到 GitHub 授权页（scope = read:user）
   G->>S: 用户同意后 302 /v1/auth/github/callback?code&state
-  S->>G: 换 GitHub token、读 /user、查 FurDevsCN 成员身份（含私有成员）
+  S->>G: 换 GitHub token、读 /user（含 created_at）、算账号年龄
   S->>C: 302 redirect_uri?code=ftc_...&state=原值（失败：?error=...&error_description=...&state=原值）
   C->>C: 比对 state
   C->>S: POST /v1/auth/token { code, code_verifier, redirect_uri }
-  S->>C: { access_token: "ftk_...", user, membership, orgs, settings, ... }
+  S->>C: { access_token: "ftk_...", user, eligibility, session, settings }
 ```
 
-- 组织成员身份用用户自己的 token 查 `GET /user/memberships/orgs/FurDevsCN`，**不需要**把成员身份设为公开。
-- 登录后服务器每 6 小时重新向 GitHub 确认一次；不再是成员就撤销所有 session（API 返回 `403 not_org_member`）。
-- 授权页若看到 FurDevsCN 旁有 **Request／Grant** 按钮：代表组织启用了“OAuth App 访问限制”。成员按 Request，owner 按 Grant（或到 `https://github.com/organizations/FurDevsCN/settings/oauth_application_policy` 批准），否则会得到 `org_access_restricted` 或 `not_org_member`。
+- 准入门槛只有一个：**GitHub 账号创建满一年**。服务器用 `GET /user` 的 `created_at` 算年龄（`MIN_ACCOUNT_AGE_DAYS`，默认 365 天），不读取任何组织信息，也不需要 `read:org` 权限。
+- 登录后服务器每 6 小时用同一 token 重新读一次 `/user`；token 被撤销就注销所有 session（API 返回 `401 invalid_token`）。账号只会变老，所以门槛不会再次阻挡已登录用户。
 
 ### 2.2 redirect_uri 白名单
 
@@ -134,10 +133,7 @@ export async function finishLogin(): Promise<string> {
 | error | 意义／处理 |
 |---|---|
 | `access_denied` | 用户在 GitHub 取消 |
-| `not_org_member` | 不是 FurDevsCN 成员（或组织阻止了 OAuth App，见 2.1） |
-| `org_membership_pending` | 有邀请但还没接受：请到 GitHub 接受组织邀请 |
-| `org_access_restricted` | 组织启用了 OAuth App 访问限制，需 owner 批准 |
-| `insufficient_scope` | 没拿到 `read:org` |
+| `account_too_new` | GitHub 账号创建未满一年（`error_description` 会带当前天数与创建日期） |
 | `github_error` / `invalid_request` | GitHub 暂时有问题，重试 |
 | `quota_exceeded` | 今日登录次数超过上限 |
 
@@ -560,7 +556,7 @@ self.addEventListener("notificationclick", (event) => {
 |---|---|---|
 | 400 | `validation_error`、`bad_request` | 修正请求；`details.issues` 指出字段 |
 | 401 | `invalid_token`、`session_expired` | 重新登录 |
-| 403 | `not_org_member`、`org_access_restricted` | 提示用户；已被退出登录 |
+| 403 | `account_too_new` | GitHub 账号未满一年；`details` 会带天数与最小要求 |
 | 403 | `limit_exceeded` | 数据条数已满 |
 | 404 | `not_found` | |
 | 409 | `deleted` | 实体在回收站，先恢复 |
@@ -591,7 +587,7 @@ self.addEventListener("notificationclick", (event) => {
 
 ### 验收
 
-1. 用 FurDevsCN 成员账号（私有成员身份）能登录；非成员看到明确的错误。
+1. 用创建满一年的 GitHub 账号能登录；新账号看到 `account_too_new` 与具体天数。
 2. 飞行模式下添加／编辑／完成／删除都正常，恢复网络后另一台设备 1 分钟内看到。
 3. 两台设备离线修改同一任务的不同字段，同步后两边的修改都在。
 4. 完成“每周一三五”的任务会出现下一期，且只出现一次。

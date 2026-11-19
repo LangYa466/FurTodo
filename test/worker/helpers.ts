@@ -4,13 +4,23 @@ import {vi} from 'vitest';
 export const BASE = 'https://todo.example.com';
 export const CLIENT_REDIRECT = 'http://localhost:5173/auth/callback';
 
-export type MembershipMock =
-  'active' | 'admin' | 'pending' | 'none' | 'restricted';
+/** Days since the mocked GitHub account was created. */
+export type AccountAgeMock = number;
+
+export const OLD_ENOUGH_DAYS = 1000;
+export const TOO_NEW_DAYS = 30;
+
+const MS_PER_DAY = 86_400_000;
 
 interface GithubUserMock {
   id: number;
   login: string;
-  membership: MembershipMock;
+  accountAgeDays: AccountAgeMock;
+}
+
+/** ISO timestamp for an account created `days` ago. */
+function createdAtFor(days: number): string {
+  return new Date(Date.now() - days * MS_PER_DAY).toISOString();
 }
 
 const usersByCode = new Map<string, GithubUserMock>();
@@ -56,11 +66,7 @@ export function installFetchMock(): void {
         }
         const token = `gho_${user.id}`;
         usersByToken.set(token, user);
-        return json({
-          access_token: token,
-          scope: 'read:org',
-          token_type: 'bearer',
-        });
+        return json({access_token: token, scope: 'read:user'});
       }
       if (url.host === 'gh-api.test') {
         const user = usersByToken.get(
@@ -73,26 +79,7 @@ export function installFetchMock(): void {
             login: user.login,
             name: user.login.toUpperCase(),
             avatar_url: `https://avatars.githubusercontent.com/u/${user.id}`,
-          });
-        }
-        if (url.pathname === '/user/orgs') {
-          return json([
-            {
-              login: 'FurDevsCN',
-              avatar_url: 'https://avatars.githubusercontent.com/u/103052241',
-            },
-          ]);
-        }
-        if (url.pathname === '/user/memberships/orgs/FurDevsCN') {
-          if (user.membership === 'none') {
-            return json({message: 'Not Found'}, 404);
-          }
-          if (user.membership === 'restricted') {
-            return json({message: 'OAuth App access restrictions'}, 403);
-          }
-          return json({
-            state: user.membership === 'pending' ? 'pending' : 'active',
-            role: user.membership === 'admin' ? 'admin' : 'member',
+            created_at: createdAtFor(user.accountAgeDays),
           });
         }
         return json({message: 'Not Found'}, 404);
@@ -108,12 +95,6 @@ export function installFetchMock(): void {
       return realFetch(input, init);
     },
   );
-}
-
-export function setMembership(id: number, membership: MembershipMock): void {
-  for (const user of usersByCode.values()) {
-    if (user.id === id) user.membership = membership;
-  }
 }
 
 /** Calls the Worker's default export with an optional bearer token. */
@@ -206,10 +187,13 @@ export async function authorizeAndCallback(
 export async function login(
   id: number,
   login = `user${id}`,
-  membership: MembershipMock = 'active',
+  accountAgeDays: AccountAgeMock = OLD_ENOUGH_DAYS,
 ): Promise<string> {
   const {verifier, challenge} = await pkcePair();
-  const back = await authorizeAndCallback({id, login, membership}, challenge);
+  const back = await authorizeAndCallback(
+    {id, login, accountAgeDays},
+    challenge,
+  );
   const code = back.searchParams.get('code');
   if (!code) throw new Error(`login failed: ${back}`);
   const {status, body} = await apiJson<{access_token: string}>(

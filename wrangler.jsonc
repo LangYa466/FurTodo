@@ -37,7 +37,8 @@
 
   "vars": {
     "PUBLIC_BASE_URL": "https://todo.example.com",
-    "GITHUB_ORG": "FurDevsCN",
+    // Accounts younger than this many days cannot use the API.
+    "MIN_ACCOUNT_AGE_DAYS": "365",
     "GITHUB_API_BASE": "https://api.github.com",
     "GITHUB_OAUTH_BASE": "https://github.com",
     // Comma-separated; `*` may stand for a subdomain, port, or path suffix.

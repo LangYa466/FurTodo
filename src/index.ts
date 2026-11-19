@@ -109,7 +109,7 @@ app.doc31('/openapi.json', c => ({
     title: 'FurTodo API',
     version: '1.0.0',
     description:
-      'FurDevsCN 组织成员专用的待办事项后端（Cloudflare Workers + KV + Durable Objects）。完整对接说明：/integration.md。所有时间响应均为 UTC ISO 8601；日期为 YYYY-MM-DD。',
+      'GitHub 账号创建满一年即可使用的待办事项后端（Cloudflare Workers + KV + Durable Objects + Drizzle ORM）。完整对接说明：/integration.md。所有时间响应均为 UTC ISO 8601；日期为 YYYY-MM-DD。',
   },
   servers: [{url: configFor(c.env).publicBaseUrl}],
   tags: [

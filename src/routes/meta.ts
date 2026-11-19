@@ -8,7 +8,7 @@ const NONCE_BYTES = 16;
 
 export function registerMetaRoutes(app: OpenAPIHono<AppEnv>): void {
   app.get('/', c => {
-    const {publicBaseUrl, githubOrg} = configFor(c.env);
+    const {publicBaseUrl, minAccountAgeDays} = configFor(c.env);
     return c.json({
       name: 'FurTodo API',
       baseUrl: publicBaseUrl,
@@ -16,7 +16,7 @@ export function registerMetaRoutes(app: OpenAPIHono<AppEnv>): void {
       openapi: `${publicBaseUrl}/openapi.json`,
       integrationGuide: `${publicBaseUrl}/integration.md`,
       devLogin: `${publicBaseUrl}/dev/login`,
-      org: githubOrg,
+      minAccountAgeDays,
     });
   });
 
