@@ -1,0 +1,12 @@
+# Local development only; production uses `wrangler secret put`.
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+# At least 32 random bytes (base64url); keys token HMACs and sealed state.
+TOKEN_SECRET=
+# Web Push VAPID keys (base64url): 65-byte uncompressed P-256 public point and
+# 32-byte private scalar d.
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+# Optional fallback for membership checks: fine-grained PAT with FurDevsCN
+# "Members: read".
+# GITHUB_ORG_TOKEN=

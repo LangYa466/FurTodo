@@ -1,0 +1,59 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "furtodo-server",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-19",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "todo.example.com", "custom_domain": true }],
+
+  // Data plane: one key per entity (e:{userId}:{kind}:{id}) and per attachment
+  // blob (b:{userId}:{attachmentId}).
+  "kv_namespaces": [{ "binding": "DATA", "id": "00000000000000000000000000000000" }],
+
+  // Control plane: one Durable Object per user for sessions, daily quotas,
+  // write serialization, reminder alarms, and Web Push.
+  "durable_objects": { "bindings": [{ "name": "USER_HUB", "class_name": "UserHub" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["UserHub"] }],
+
+  // Per-IP limit on the unauthenticated login endpoints, counted per location.
+  "ratelimits": [{ "name": "AUTH_LIMITER", "namespace_id": "4201", "simple": { "limit": 30, "period": 60 } }],
+
+  "rules": [{ "type": "Text", "globs": ["**/*.md"], "fallthrough": true }],
+
+  "observability": {
+    "enabled": true,
+    "redact_query_string": true,
+    "logs": { "enabled": true, "invocation_logs": true },
+    "traces": { "enabled": true }
+  },
+
+  "secrets": {
+    "required": ["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET", "TOKEN_SECRET", "VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY"]
+  },
+
+  "vars": {
+    "PUBLIC_BASE_URL": "https://todo.example.com",
+    "GITHUB_ORG": "FurDevsCN",
+    "GITHUB_API_BASE": "https://api.github.com",
+    "GITHUB_OAUTH_BASE": "https://github.com",
+    // Comma-separated; `*` may stand for a subdomain, port, or path suffix.
+    "ALLOWED_REDIRECT_URIS": "http://localhost:*/*,http://127.0.0.1:*/*,furtodo://*,https://*.example.com/*",
+    "VAPID_SUBJECT": "mailto:user@example.com",
+
+    // Per-user daily quotas; they reset at midnight in QUOTA_TIMEZONE.
+    "QUOTA_TIMEZONE": "Asia/Taipei",
+    "QUOTA_REQUESTS_PER_DAY": "20000",
+    "QUOTA_KV_READS_PER_DAY": "60000",
+    "QUOTA_KV_WRITES_PER_DAY": "3000",
+    "QUOTA_KV_LISTS_PER_DAY": "3000",
+    "QUOTA_UPLOAD_BYTES_PER_DAY": "52428800",
+    "QUOTA_LOGINS_PER_DAY": "30",
+    "QUOTA_PUSH_PER_DAY": "500",
+
+    // Per-user totals.
+    "LIMIT_MAX_ENTITIES": "20000",
+    "LIMIT_STORAGE_BYTES": "104857600",
+    "LIMIT_MAX_FILE_BYTES": "5242880"
+  }
+}
