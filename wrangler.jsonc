@@ -46,11 +46,15 @@
     "VAPID_SUBJECT": "mailto:user@example.com",
 
     // Per-user daily quotas; they reset at midnight in QUOTA_TIMEZONE.
+    // KV has no Cloudflare spending limit, so these caps are the only brake:
+    // KV Paid includes 10M reads, 1M writes, 1M lists per month, and the
+    // per-user ceilings below are sized so that a user burning all of them
+    // costs about $0.50/month (reads dominate) instead of $1.86/month.
     "QUOTA_TIMEZONE": "Asia/Shanghai",
     "QUOTA_REQUESTS_PER_DAY": "20000",
-    "QUOTA_KV_READS_PER_DAY": "60000",
-    "QUOTA_KV_WRITES_PER_DAY": "3000",
-    "QUOTA_KV_LISTS_PER_DAY": "3000",
+    "QUOTA_KV_READS_PER_DAY": "20000",
+    "QUOTA_KV_WRITES_PER_DAY": "1000",
+    "QUOTA_KV_LISTS_PER_DAY": "400",
     "QUOTA_LOGINS_PER_DAY": "30",
     "QUOTA_PUSH_PER_DAY": "500",
 

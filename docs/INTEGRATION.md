@@ -528,15 +528,15 @@ self.addEventListener("notificationclick", (event) => {
 | 项目 | 默认上限 | 消耗方式 |
 |---|---|---|
 | requests | 20,000 | 每个需要登录的 API 调用 |
-| KV reads | 60,000 | 读数据（每条 1） |
-| KV writes | 3,000 | 每条实际变更 1（值没变不算） |
-| KV lists | 3,000 | 全量扫描每 1000 条 1 |
+| KV reads | 20,000 | 读数据（每条 1） |
+| KV writes | 1,000 | 每条实际变更 1（值没变不算） |
+| KV lists | 400 | 全量扫描每 1000 条 1 |
 | logins | 30 | 登录次数 |
 | pushes | 500 | 推送发送数 |
 
 总量上限：未删除的实体 20,000 条（任务＋清单＋文件夹＋标签，超过 `403 limit_exceeded`）。
 
-`GET /v1/usage` 可以查询今天用了多少。节省配额的做法：
+配额按**每位用户**计算，不是全站共享；单日内反复触发上限只会让该用户当天被限流，不会影响其他人。`GET /v1/usage` 可以查询今天用了多少。节省配额的做法：
 
 - 用 sync（push/pull）而不是频繁调用视图或 `GET /v1/tasks`：增量 pull 没有变更时几乎是 0 成本，10 分钟内拉取过的也只读内存。
 - 编辑 debounce、合并 mutation。
