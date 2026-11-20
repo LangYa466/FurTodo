@@ -57,7 +57,7 @@
     "GITHUB_OAUTH_BASE": "https://github.com",
     // Comma-separated; `*` may stand for a subdomain, port, or path suffix.
     "ALLOWED_REDIRECT_URIS": "http://localhost:*/*,http://127.0.0.1:*/*,furtodo://*,https://*.example.com/*",
-    "VAPID_SUBJECT": "mailto:user@example.com",
+    "VAPID_SUBJECT": "mailto:admin@example.com",
 
     // Per-user daily quotas bound the database work one account can cause;
     // reads and writes count entity rows. They reset at midnight in

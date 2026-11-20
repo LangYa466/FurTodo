@@ -7,7 +7,7 @@
 
 | 项目 | 值 |
 |---|---|
-| Base URL（测试后端） | `https://todo.example.com` |
+| Base URL（示例，换成你自己的部署地址） | `https://todo.example.com` |
 | OpenAPI | `https://todo.example.com/openapi.json` |
 | 交互文档（可直接在线调试 API） | `https://todo.example.com/docs` |
 | 开发者登录／获取 token | `https://todo.example.com/dev/login` |
@@ -74,7 +74,7 @@ sequenceDiagram
 | 样式 | 用途 |
 |---|---|
 | `http://localhost:*/*`、`http://127.0.0.1:*/*` | 本机开发（任何 port、任何 path） |
-| `https://*.example.com/*` | 正式部署的 Web |
+| `https://*.example.com/*` | 正式部署的 Web（示例，见 `ALLOWED_REDIRECT_URIS`） |
 | `furtodo://*` | App（custom URL scheme，建议 `furtodo://auth/callback`） |
 | `https://todo.example.com/dev/login` | 内置开发者登录页 |
 

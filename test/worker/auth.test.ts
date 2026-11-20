@@ -76,7 +76,7 @@ describe('GitHub OAuth + PKCE', () => {
     for (const redirect of [
       'https://evil.example/cb',
       'http://localhost:5173@evil.example/cb',
-      'https://evil.example#.example.com/x',
+      'https://evil.example#*.example.com/x',
     ]) {
       const q = new URLSearchParams({
         redirect_uri: redirect,
