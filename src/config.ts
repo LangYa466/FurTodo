@@ -1,7 +1,6 @@
 import {isValidTimeZone} from './lib/time';
 
-export type QuotaKind =
-  'requests' | 'reads' | 'writes' | 'lists' | 'logins' | 'pushes';
+export type QuotaKind = 'requests' | 'reads' | 'writes' | 'logins' | 'pushes';
 export type QuotaCounts = Record<QuotaKind, number>;
 
 export interface AppConfig {
@@ -31,7 +30,7 @@ function trimTrailingSlashes(url: string): string {
 }
 
 /** Validates the Worker vars eagerly; a bad value fails instead of defaulting. */
-export function readConfig(env: Env): AppConfig {
+function readConfig(env: Env): AppConfig {
   if (!isValidTimeZone(env.QUOTA_TIMEZONE)) {
     throw new Error(
       `Config QUOTA_TIMEZONE is not an IANA zone: ${env.QUOTA_TIMEZONE}`,
@@ -59,17 +58,10 @@ export function readConfig(env: Env): AppConfig {
         'QUOTA_REQUESTS_PER_DAY',
         env.QUOTA_REQUESTS_PER_DAY,
       ),
-      reads: parsePositiveInt(
-        'QUOTA_KV_READS_PER_DAY',
-        env.QUOTA_KV_READS_PER_DAY,
-      ),
+      reads: parsePositiveInt('QUOTA_READS_PER_DAY', env.QUOTA_READS_PER_DAY),
       writes: parsePositiveInt(
-        'QUOTA_KV_WRITES_PER_DAY',
-        env.QUOTA_KV_WRITES_PER_DAY,
-      ),
-      lists: parsePositiveInt(
-        'QUOTA_KV_LISTS_PER_DAY',
-        env.QUOTA_KV_LISTS_PER_DAY,
+        'QUOTA_WRITES_PER_DAY',
+        env.QUOTA_WRITES_PER_DAY,
       ),
       logins: parsePositiveInt(
         'QUOTA_LOGINS_PER_DAY',
@@ -79,4 +71,16 @@ export function readConfig(env: Env): AppConfig {
     },
     maxEntities: parsePositiveInt('LIMIT_MAX_ENTITIES', env.LIMIT_MAX_ENTITIES),
   };
+}
+
+const configCache = new WeakMap<Env, AppConfig>();
+
+/** Returns the parsed config, once per `env` object. */
+export function configFor(env: Env): AppConfig {
+  let config = configCache.get(env);
+  if (!config) {
+    config = readConfig(env);
+    configCache.set(env, config);
+  }
+  return config;
 }

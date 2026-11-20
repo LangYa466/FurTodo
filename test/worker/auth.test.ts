@@ -1,4 +1,6 @@
-import {beforeAll, describe, expect, it} from 'vitest';
+import {eq} from 'drizzle-orm';
+import {afterEach, beforeAll, describe, expect, it} from 'vitest';
+import {users} from '../../src/db/schema';
 import {
   CLIENT_REDIRECT,
   OLD_ENOUGH_DAYS,
@@ -9,14 +11,35 @@ import {
   installFetchMock,
   login,
   pkcePair,
+  revokeGithubTokens,
+  setGithubDown,
+  uniqueUserId,
+  withTestDatabase,
 } from './helpers';
 
+const HOUR_MS = 3_600_000;
+
+/** Pretends GitHub last confirmed the user `hours` ago. */
+function lastCheckedHoursAgo(userId: number, hours: number): Promise<void> {
+  return withTestDatabase(async db => {
+    await db
+      .update(users)
+      .set({
+        eligibilityCheckedAt: new Date(Date.now() - hours * HOUR_MS),
+        eligibilityFailedAt: null,
+      })
+      .where(eq(users.id, userId));
+  });
+}
+
 beforeAll(() => installFetchMock());
+afterEach(() => setGithubDown(false));
 
 describe('GitHub OAuth + PKCE', () => {
   it('logs in an account older than a year and reports its age', async () => {
-    const token = await login(1001, 'alice', OLD_ENOUGH_DAYS);
-    expect(token).toMatch(/^ftk_1001\./);
+    const id = uniqueUserId();
+    const token = await login(id, 'alice', OLD_ENOUGH_DAYS);
+    expect(token.startsWith(`ftk_${id}.`)).toBe(true);
     const {status, body} = await apiJson<{
       user: {login: string; createdAt: string};
       eligibility: {
@@ -24,18 +47,20 @@ describe('GitHub OAuth + PKCE', () => {
         accountAgeDays: number;
         checkedAt: string;
       };
+      settings: {rev: number; timezone: string};
     }>('/v1/me', {token});
     expect(status).toBe(200);
     expect(body.user.login).toBe('alice');
     expect(body.user.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(body.eligibility.minAccountAgeDays).toBe(365);
     expect(body.eligibility.accountAgeDays).toBeGreaterThanOrEqual(365);
+    expect(body.settings).toMatchObject({rev: 0, timezone: 'Asia/Shanghai'});
   });
 
   it('rejects accounts younger than a year with account_too_new', async () => {
     const {challenge} = await pkcePair();
     const back = await authorizeAndCallback(
-      {id: 2000, login: 'newbie', accountAgeDays: TOO_NEW_DAYS},
+      {id: uniqueUserId(), login: 'newbie', accountAgeDays: TOO_NEW_DAYS},
       challenge,
       's-1',
     );
@@ -67,7 +92,7 @@ describe('GitHub OAuth + PKCE', () => {
   it('login code is single-use and bound to the PKCE verifier and redirect_uri', async () => {
     const {verifier, challenge} = await pkcePair();
     const back = await authorizeAndCallback(
-      {id: 1002, login: 'bob', accountAgeDays: OLD_ENOUGH_DAYS},
+      {id: uniqueUserId(), login: 'bob', accountAgeDays: OLD_ENOUGH_DAYS},
       challenge,
     );
     const code = back.searchParams.get('code');
@@ -91,7 +116,7 @@ describe('GitHub OAuth + PKCE', () => {
     expect((await exchange({})).status).toBe(400);
   });
 
-  it('rejects forged and missing tokens before touching storage', async () => {
+  it('rejects forged and missing tokens', async () => {
     expect((await apiJson('/v1/me')).status).toBe(401);
     expect(
       (
@@ -103,7 +128,7 @@ describe('GitHub OAuth + PKCE', () => {
   });
 
   it('personal tokens work, sessions can be listed and revoked, logout invalidates the token', async () => {
-    const token = await login(1003, 'carol');
+    const token = await login(uniqueUserId(), 'carol');
     const pat = await apiJson<{
       token: string;
       session: {id: string; kind: string};
@@ -131,8 +156,50 @@ describe('GitHub OAuth + PKCE', () => {
     expect((await apiJson('/v1/me', {token: pat.body.token})).status).toBe(401);
 
     expect(
-      (await apiJson('/v1/auth/logout', {token, method: 'POST'})).status,
-    ).toBe(200);
+      (await apiJson('/v1/auth/logout', {token, method: 'POST'})).body,
+    ).toEqual({revoked: true});
     expect((await apiJson('/v1/me', {token})).status).toBe(401);
+  });
+});
+
+describe('GitHub recheck', () => {
+  it('drops every session once GitHub stops accepting the token', async () => {
+    const id = uniqueUserId();
+    const token = await login(id, 'dave');
+    const pat = await apiJson<{token: string}>('/v1/auth/tokens', {
+      token,
+      method: 'POST',
+      body: JSON.stringify({name: 'script', expiresInDays: 30}),
+    });
+    revokeGithubTokens(id);
+    // Rechecks wait six hours, so a fresh revocation is not seen yet.
+    expect((await apiJson('/v1/me', {token})).status).toBe(200);
+
+    await lastCheckedHoursAgo(id, 7);
+    const denied = await apiJson<{error: {code: string}}>('/v1/me', {token});
+    expect(denied.status).toBe(401);
+    expect(denied.body.error.code).toBe('invalid_token');
+    expect((await apiJson('/v1/me', {token: pat.body.token})).status).toBe(401);
+  });
+
+  it('keeps serving through a GitHub outage until the grace period ends', async () => {
+    const id = uniqueUserId();
+    const token = await login(id, 'erin');
+    setGithubDown(true);
+
+    await lastCheckedHoursAgo(id, 7);
+    expect((await apiJson('/v1/me', {token})).status).toBe(200);
+
+    await lastCheckedHoursAgo(id, 73);
+    const unavailable = await apiJson<{error: {code: string}}>('/v1/me', {
+      token,
+    });
+    expect(unavailable.status).toBe(503);
+    expect(unavailable.body.error.code).toBe('github_unavailable');
+
+    setGithubDown(false);
+    // Clears the failure backoff, as if five minutes had passed.
+    await lastCheckedHoursAgo(id, 73);
+    expect((await apiJson('/v1/me', {token})).status).toBe(200);
   });
 });

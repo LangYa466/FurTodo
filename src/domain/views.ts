@@ -2,17 +2,15 @@
 // take loaded entities and return them filtered and ordered.
 
 import {addDays, diffDays, startOfDayInstant} from '../lib/time';
-import {
-  taskDataOf,
-  type EntityMetadata,
-  type Settings,
-  type StoredEntity,
-} from './model';
+import {taskDataOf, type Settings, type StoredEntity} from './model';
 
-const SUGGESTION_LOOKAHEAD_DAYS = 3;
+/** Tasks due this many days ahead are suggested for My Day. */
+export const SUGGESTION_LOOKAHEAD_DAYS = 3;
+export const HIGH_PRIORITY = 3;
+/** Quadrants 1 (urgent and important) and 2 (important). */
+export const IMPORTANT_QUADRANTS = [1, 2];
 const SUGGESTION_LIMIT = 20;
 const FOCUS_COUNT = 3;
-const HIGH_PRIORITY = 3;
 const QUICK_WIN_MINUTES = 15;
 /** Sorts after every real "HH:mm", so untimed tasks come last. */
 const NO_TIME = '99:99';
@@ -30,11 +28,7 @@ const QUICK_WIN_SCORE = 5;
 type TaskComparator = (a: StoredEntity, b: StoredEntity) => number;
 
 function isImportantQuadrant(quadrant: number | null): boolean {
-  return quadrant === 1 || quadrant === 2;
-}
-
-export function isOpenMetadata(metadata: EntityMetadata): boolean {
-  return !metadata.deletedAt && !metadata.completedAt;
+  return quadrant !== null && IMPORTANT_QUADRANTS.includes(quadrant);
 }
 
 /**
@@ -102,31 +96,6 @@ function byFocusScore(date: string): TaskComparator {
     focusScore(b, date) - focusScore(a, date) ||
     byDueTime(a, b) ||
     taskDataOf(a).sortOrder - taskDataOf(b).sortOrder;
-}
-
-/**
- * Returns a metadata filter for today-view candidates, so the view reads only
- * the task values it can show.
- */
-export function todayFilter(
-  date: string,
-  timeZone: string,
-): (metadata: EntityMetadata) => boolean {
-  const dayStart = startOfDayInstant(date, timeZone);
-  const dayEnd = startOfDayInstant(addDays(date, 1), timeZone);
-  const horizon = addDays(date, SUGGESTION_LOOKAHEAD_DAYS);
-  return metadata => {
-    if (metadata.deletedAt) return false;
-    if (metadata.completedAt) {
-      return metadata.completedAt >= dayStart && metadata.completedAt < dayEnd;
-    }
-    return Boolean(
-      (metadata.myDay && metadata.myDay <= date) ||
-      (metadata.dueDate && metadata.dueDate <= horizon) ||
-      metadata.priority === HIGH_PRIORITY ||
-      isImportantQuadrant(metadata.quadrant ?? null),
-    );
-  };
 }
 
 export interface TodayStats {
@@ -316,41 +285,11 @@ export interface TaskQuery {
   includeDeleted: boolean;
 }
 
-/** Applies the query conditions that metadata can answer without a read. */
-export function metadataMatchesQuery(
-  metadata: EntityMetadata,
-  query: TaskQuery,
-): boolean {
-  if (metadata.deletedAt && !query.includeDeleted) return false;
-  if (query.status === 'open' && metadata.completedAt) return false;
-  if (query.status === 'completed' && !metadata.completedAt) return false;
-  if (query.listId !== undefined && metadata.listId !== query.listId) {
-    return false;
-  }
-  if (query.inboxOnly && metadata.listId) return false;
-  if (
-    query.dueFrom &&
-    (!metadata.dueDate || metadata.dueDate < query.dueFrom)
-  ) {
-    return false;
-  }
-  if (query.dueTo && (!metadata.dueDate || metadata.dueDate > query.dueTo)) {
-    return false;
-  }
-  if (
-    query.priority !== undefined &&
-    (metadata.priority ?? 0) !== query.priority
-  ) {
-    return false;
-  }
-  if (query.quadrant !== undefined && metadata.quadrant !== query.quadrant) {
-    return false;
-  }
-  if (query.myDay !== undefined && metadata.myDay !== query.myDay) return false;
-  return true;
-}
-
-/** Applies the remaining query conditions; open tasks sort before completed. */
+/**
+ * Applies the query conditions the database does not (tag, energy, estimate,
+ * text search) and sorts: open tasks first, by sortOrder; then completed
+ * tasks, newest first.
+ */
 export function filterAndSortTasks(
   tasks: StoredEntity[],
   query: TaskQuery,

@@ -5,41 +5,23 @@ export const KINDS = ['task', 'list', 'folder', 'tag', 'settings'] as const;
 export type Kind = (typeof KINDS)[number];
 export type WeekStart = 0 | 1;
 
-/** An entity as stored in KV, one key per entity. */
+/** A synced entity: one row of the `entities` table. */
 export interface StoredEntity {
-  schemaVersion: 1;
   kind: Kind;
   id: string;
   data: Record<string, unknown>;
   /** Per-field last-writer-wins clock: client edit time (ms) of each field. */
   clock: Record<string, number>;
   createdAt: number;
-  /** Server stamp, strictly increasing per user; sync cursors compare it. */
+  /**
+   * Stamp (ms) of the transaction that last wrote the entity. Stamps grow
+   * with every write transaction of a user; sync cursors order by them.
+   */
   updatedAt: number;
   deletedAt: number | null;
   /** "list:<id>" when a list deletion cascaded here; restoring it undoes this. */
   deletedVia: string | null;
   rev: number;
-}
-
-/**
- * KV metadata (max 1024 bytes) returned by `list()`, so views can filter
- * without reading every value.
- */
-export interface EntityMetadata {
-  rev: number;
-  updatedAt: number;
-  deletedAt?: number;
-  /** Task completion time in ms. */
-  completedAt?: number;
-  dueDate?: string;
-  myDay?: string;
-  listId?: string;
-  /** Only set when greater than 0. */
-  priority?: number;
-  quadrant?: number;
-  /** List, folder, or tag name, truncated. */
-  name?: string;
 }
 
 export interface Settings {
@@ -92,9 +74,8 @@ export interface TaskData {
 }
 
 export const SETTINGS_ID = 'main';
-export const TOMBSTONE_TTL_SECONDS = 30 * 86_400;
-export const TOMBSTONE_RETENTION_MS = TOMBSTONE_TTL_SECONDS * 1000;
-const METADATA_NAME_MAX_LENGTH = 100;
+/** Deleted entities stay in the trash this long before they are purged. */
+export const TOMBSTONE_RETENTION_MS = 30 * 86_400_000;
 
 export const DEFAULT_SETTINGS: Settings = {
   timezone: 'Asia/Shanghai',
@@ -160,21 +141,6 @@ export function taskDataOf(task: StoredEntity): TaskData {
   return task.data as unknown as TaskData;
 }
 
-export function entityKeyPrefix(userId: string, kind?: Kind): string {
-  return kind ? `e:${userId}:${kind}:` : `e:${userId}:`;
-}
-
-export function entityKey(userId: string, kind: Kind, id: string): string {
-  return `e:${userId}:${kind}:${id}`;
-}
-
-export function parseEntityKey(key: string): {kind: Kind; id: string} | null {
-  const [prefix, , kind = '', ...idParts] = key.split(':');
-  const id = idParts.join(':');
-  if (prefix !== 'e' || !id || !isKind(kind)) return null;
-  return {kind, id};
-}
-
 /**
  * Creates an entity from defaults plus `patch`.
  * @param editedAt Client edit time recorded in the field clock.
@@ -192,7 +158,6 @@ export function newEntity(
     clock[field] = editedAt;
   }
   return {
-    schemaVersion: 1,
     kind,
     id,
     data: {...DEFAULT_FIELDS[kind](stamp), ...patch},
@@ -233,34 +198,7 @@ export function mergePatch(
   return {next: {...current, data, clock}, changedFields};
 }
 
-export function metadataFor(entity: StoredEntity): EntityMetadata {
-  const metadata: EntityMetadata = {
-    rev: entity.rev,
-    updatedAt: entity.updatedAt,
-  };
-  if (entity.deletedAt) metadata.deletedAt = entity.deletedAt;
-  const data = entity.data;
-  if (entity.kind === 'task') {
-    if (typeof data.completedAt === 'string') {
-      metadata.completedAt = Date.parse(data.completedAt);
-    }
-    if (typeof data.dueDate === 'string') metadata.dueDate = data.dueDate;
-    if (typeof data.myDay === 'string') metadata.myDay = data.myDay;
-    if (typeof data.listId === 'string') metadata.listId = data.listId;
-    if (typeof data.priority === 'number' && data.priority > 0) {
-      metadata.priority = data.priority;
-    }
-    if (typeof data.quadrant === 'number') metadata.quadrant = data.quadrant;
-  } else if (entity.kind !== 'settings' && typeof data.name === 'string') {
-    metadata.name = data.name.slice(0, METADATA_NAME_MAX_LENGTH);
-  }
-  return metadata;
-}
-
-/**
- * Value of an API entity field. Deliberately not a recursive JSON type:
- * recursion exceeds the type-instantiation depth of Durable Object RPC stubs.
- */
+/** Value of an API entity field; entity data only holds zod-validated JSON. */
 export type ApiField = string | number | boolean | null | object;
 
 /** An entity as returned by the HTTP API. */
@@ -300,21 +238,15 @@ export function settingsFrom(entity: StoredEntity | null): Settings {
   return {...DEFAULT_SETTINGS, ...(entity.data as Partial<Settings>)};
 }
 
-/** An entity the user's Durable Object wrote recently (the read overlay). */
-export interface JournalEntry {
-  key: string;
-  metadata: EntityMetadata;
-  body: StoredEntity;
-}
-
-/** A journal entry as sent over RPC; `body` stays the stored JSON string. */
-export interface RawJournalEntry {
-  key: string;
-  metadata: EntityMetadata;
-  body: string;
-}
-
-export function parseJournalEntry(entry: RawJournalEntry): JournalEntry {
-  // Journal bodies are JSON.stringify(StoredEntity) written by UserHub.
-  return {...entry, body: JSON.parse(entry.body) as StoredEntity};
+/** Returns the API shape of settings that were never saved (rev 0). */
+export function unsavedSettingsEntity(settings: Settings): ApiEntity {
+  const epoch = new Date(0).toISOString();
+  return {
+    id: SETTINGS_ID,
+    ...settings,
+    rev: 0,
+    createdAt: epoch,
+    updatedAt: epoch,
+    deletedAt: null,
+  };
 }

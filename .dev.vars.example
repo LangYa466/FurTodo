@@ -7,6 +7,8 @@ TOKEN_SECRET=
 # 32-byte private scalar d.
 VAPID_PUBLIC_KEY=
 VAPID_PRIVATE_KEY=
-# Optional fallback for membership checks: fine-grained PAT with FurDevsCN
-# "Members: read".
-# GITHUB_ORG_TOKEN=
+
+# The database is not a Worker secret. Before `npm run dev`, point Hyperdrive
+# at a local PostgreSQL and apply the migrations:
+#   export CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgres://...
+#   DATABASE_URL=postgres://... npm run db:migrate

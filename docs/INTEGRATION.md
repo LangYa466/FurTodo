@@ -21,7 +21,7 @@
 | 错误格式 | `{ "error": { "code": "...", "message": "...", "details": { ... } } }` |
 | 调试 | 每个响应都有 `X-Request-Id`，报告问题时附上 |
 
-**一句话架构**：每个实体（任务、清单…）是一条 KV 数据，存在 Workers KV；每位用户的控制面（session、每日配额账本、写入序列化、提醒闹钟、Web Push）由一个 Durable Object 负责，其 SQLite 数据库通过 Drizzle ORM 访问，schema 变更用 drizzle-kit migration。客户端应该做成 **离线优先（offline-first）**：本地数据库是 UI 的真实来源，背景用 `/v1/sync/push` 与 `/v1/sync/pull` 同步。
+**一句话架构**：后端是 Cloudflare Workers，所有数据（实体、session、每日配额、提醒、Web Push 订阅）存在 PostgreSQL，经 Hyperdrive 连接池访问，用 Drizzle ORM 读写，schema 变更用 drizzle-kit migration。同一用户的写入在数据库事务里串行执行；到期提醒由每分钟一次的定时任务发送。客户端应该做成 **离线优先（offline-first）**：本地数据库是 UI 的真实来源，背景用 `/v1/sync/push` 与 `/v1/sync/pull` 同步。
 
 ---
 
@@ -224,7 +224,7 @@ export async function finishLogin(): Promise<string> {
 ### 3.6 删除与回收站
 
 - 删除＝移到回收站（`deletedAt` 有值），30 天内可 `POST /v1/{tasks|lists|folders|tags}/{id}/restore` 恢复。`GET /v1/trash` 列出回收站。
-- **删除清单**：清单内的任务会一起在后台移到回收站（通常几秒内，从 pull 收到）；恢复清单会把它们一起恢复。客户端删除清单时，本地也直接把这些任务标记为删除即可。
+- **删除清单**：清单内的任务在同一次写入里一起移到回收站（响应只返回清单本身，任务从 pull 收到）；恢复清单会把这些随清单删除的任务一起恢复。客户端删除清单时，本地也直接把这些任务标记为删除即可。
 - **删除标签／文件夹**：任务的 `tagIds`、清单的 `folderId` **不会被清掉**（这样恢复时能完整还原）。客户端显示时忽略指向已删除或不存在实体的 id。
 - 恢复任务时，如果它的清单已删除，会被移到收件箱。
 - 已删除的实体不能修改（`409 deleted`），要先恢复。
@@ -275,7 +275,7 @@ PATCH 只发送要改的字段；未知字段或只读字段会 `400 validation_
 - 用户的每个操作：立刻改本地 → 加一条 mutation 到 **outbox**（本地队列）→ 调度同步。
 - 同步 = 先 `push` outbox，再 `pull` 到没有更多为止。
 - 触发时机：App 启动、回到前台、网络恢复、本地编辑后（debounce 1–2 秒）、前台时每 30–60 秒轮询。
-- **没有变更时 pull 几乎不消耗配额**，放心轮询；但不要比每 15 秒更频繁。
+- **没有变更时 pull 只消耗 1 次请求配额**，放心轮询；但不要比每 15 秒更频繁。
 
 ### 5.2 Push
 
@@ -313,7 +313,6 @@ POST /v1/sync/push
 | `rejected` + `deleted` | 实体已在回收站：丢弃这条，本地用 `entity` 覆盖（会显示为已删除） |
 | `rejected` + `not_found` | 丢弃（例如对不存在的实体做 restore／缺必填字段） |
 | `rejected` + `quota_exceeded` | **保留** outbox，`error.retryAfter` 秒后再发送 |
-| `rejected` + `storage_busy` | 保留，几秒后重发（同一条数据 1 秒内被写太多次） |
 | `rejected` + `limit_exceeded` | 丢弃并提示用户（数据条数上限） |
 
 所有 mutation 都是**幂等**的：网络中断不知道有没有成功时，整批重发即可。
@@ -322,20 +321,20 @@ POST /v1/sync/push
 
 ```http
 GET /v1/sync/pull                 # 第一次：全量快照（不含回收站）
-GET /v1/sync/pull?cursor=eyJ2Ijox…   # 之后：增量（含删除）
+GET /v1/sync/pull?cursor=eyJ2Ijoy…   # 之后：增量（含删除）
 ```
 
 ```jsonc
 {
   "changes": [ { "type": "task", "entity": { … } }, { "type": "settings", "entity": { … } } ],
-  "cursor": "eyJ2IjoxLCJzIjoxNzYzNTM5…",   // 存起来下次带回（不透明字符串）
+  "cursor": "eyJ2IjoyLCJzIjoxNzYzNTM5…",   // 存起来下次带回（不透明字符串）
   "hasMore": false,                         // true → 立即用新 cursor 再拉
-  "reset": false,                           // true → cursor 太旧（> 30 天），清掉本地数据（保留 outbox），不带 cursor 重新拉取
+  "reset": false,                           // true → cursor 之后有删除记录已被永久清除（回收站超过 30 天），清掉本地数据（保留 outbox），不带 cursor 重新拉取
   "serverTime": "2026-11-19T10:00:00.000Z"
 }
 ```
 
-- `changes` 按服务器 `updatedAt` 由旧到新，每个实体只会出现最新版本。
+- `changes` 按服务器写入顺序由旧到新（同一次写入的多个实体 `updatedAt` 相同），每个实体只会出现最新版本。
 - `entity.deletedAt` 非 null → 本地标记删除（或移到回收站界面）。
 - `limit` 默认 500，最大 1000。
 - 应用规则：只有在 `entity.rev` ≥ 本地 rev 时才覆盖（避免回退），且不要覆盖本地还在 outbox 里没发送的字段（见 5.4）。
@@ -354,8 +353,8 @@ async function sync() {
     if (!res.ok) throw new RetryLater(res); // 网络/5xx：保留 outbox，指数退避
     for (const r of res.body.results) {
       const item = batch[r.index];
-      if (r.status === "rejected" && ["quota_exceeded", "storage_busy"].includes(r.error.code)) {
-        return scheduleRetry(r.error.retryAfter ?? 5); // 保留这条与之后的
+      if (r.status === "rejected" && r.error.code === "quota_exceeded") {
+        return scheduleRetry(r.error.retryAfter); // 保留这条与之后的
       }
       await outbox.remove(item.seq);
       if (r.entity) await applyServerEntity(r.type, r.entity);
@@ -396,13 +395,13 @@ function editTask(id: string, changes: Partial<Task>) {
 ```
 
 - 新建实体：客户端先生成 UUIDv7 作为 id，再 `upsert`（含必填字段）。
-- 文字输入不要每个字都发送一次：**编辑结束或停顿 1–2 秒才写入 outbox**（同一条数据每秒最多写一次）。
+- 文字输入不要每个字都发送一次：**编辑结束或停顿 1–2 秒才写入 outbox**，以节省请求与写入配额。
 - 同一实体连续多条未发送的 upsert 可以合并（`data` 合并、`at` 取最大值）。
 - 完成重复任务：只发送 `completedAt`，下一期等服务器返回。离线时 UI 可以先显示“已完成”。
 
 ### 5.5 一致性说明
 
-- 写入在每位用户的 Durable Object 内序列化，服务器上不会丢失更新；跨设备冲突以“字段 + 编辑时间”决定。
+- 同一用户的写入在数据库事务里串行执行，服务器上不会丢失更新；跨设备冲突以“字段 + 编辑时间”决定。
 - 同步（push 响应、pull）一定看得到自己刚写入的数据。
 - `subtasks`、`links`、`reminders`、`tagIds` 是“整个数组”一个字段：两台设备同时修改同一个任务的子任务，较晚编辑的整个数组胜出。
 
@@ -476,7 +475,7 @@ function editTask(id: string, changes: Partial<Task>) {
 
 ## 8. 提醒
 
-数据层只有 `task.reminders: [{ id, at }]`（绝对时刻）。只有日期的任务，UI 建议默认 `dueDate` + `settings.defaultReminderTime`。任务完成或删除后提醒自动失效。
+数据层只有 `task.reminders: [{ id, at }]`（绝对时刻）。只有日期的任务，UI 建议默认 `dueDate` + `settings.defaultReminderTime`。任务完成或删除后提醒自动失效。服务器每分钟检查一次到期提醒，Web Push 最多晚约 1 分钟送达。
 
 ### 8.1 Web：Web Push（页面关掉也收得到）
 
@@ -528,9 +527,8 @@ self.addEventListener("notificationclick", (event) => {
 | 项目 | 默认上限 | 消耗方式 |
 |---|---|---|
 | requests | 20,000 | 每个需要登录的 API 调用 |
-| KV reads | 20,000 | 读数据（每条 1） |
-| KV writes | 1,000 | 每条实际变更 1（值没变不算） |
-| KV lists | 400 | 全量扫描每 1000 条 1 |
+| reads | 200,000 | 从数据库读出的数据条数（每条 1） |
+| writes | 10,000 | 实际写入的数据条数（值没变不算）；删除／恢复清单时连带的任务也计入，但不会因此被拒绝 |
 | logins | 30 | 登录次数 |
 | pushes | 500 | 推送发送数 |
 
@@ -538,9 +536,9 @@ self.addEventListener("notificationclick", (event) => {
 
 配额按**每位用户**计算，不是全站共享；单日内反复触发上限只会让该用户当天被限流，不会影响其他人。`GET /v1/usage` 可以查询今天用了多少。节省配额的做法：
 
-- 用 sync（push/pull）而不是频繁调用视图或 `GET /v1/tasks`：增量 pull 没有变更时几乎是 0 成本，10 分钟内拉取过的也只读内存。
+- 用 sync（push/pull）而不是频繁调用视图或 `GET /v1/tasks`：增量 pull 只读取有变更的数据。
 - 编辑 debounce、合并 mutation。
-- 视图、`GET /v1/tasks`、全量 pull 会扫描全部数据，留给“没有本地数据库”的场景。
+- 视图与 `GET /v1/tasks` 会读取所有符合条件的任务、全量 pull 会读取全部数据，留给“没有本地数据库”的场景。
 
 登录相关端点另有每 IP 每分钟 30 次的限流（`429 rate_limited`）。
 
@@ -562,7 +560,7 @@ self.addEventListener("notificationclick", (event) => {
 | 409 | `deleted` | 实体在回收站，先恢复 |
 | 409 | `limit_exceeded` | 推送订阅数已满 |
 | 429 | `quota_exceeded`、`rate_limited` | 等 `Retry-After` 秒 |
-| 503 | `github_unavailable`、`storage_busy` | 稍后重试 |
+| 503 | `github_unavailable`、`storage_busy`、`storage_unavailable` | 稍后重试 |
 | 500 | `internal_error` | 附上 `details.requestId` 上报 |
 
 ---

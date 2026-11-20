@@ -1,7 +1,12 @@
 import {createRoute, z, type OpenAPIHono} from '@hono/zod-openapi';
-import type {AppEnv} from '../http/context';
+import {configFor} from '../config';
+import {database, type AppEnv} from '../http/context';
 import {BEARER_SECURITY, errorResponses, jsonContent} from '../http/openapi';
-import {unwrap} from '../lib/errors';
+import {
+  addPushSubscription,
+  removePushSubscription,
+  sendTestPush,
+} from '../store/push';
 
 const MAX_ENDPOINT_LENGTH = 1024;
 
@@ -34,7 +39,7 @@ export function registerPushRoutes(app: OpenAPIHono<AppEnv>): void {
       tags: ['Push'],
       summary: '登记 Web Push 订阅（PushSubscription.toJSON() 的内容）',
       description:
-        '提醒时间到达时，服务器会推送 JSON：{ type: "reminder", taskId, reminderId, title, dueDate, dueTime, at }。同一 endpoint 重发会覆盖。',
+        '提醒时间到达后（1 分钟内），服务器会推送 JSON：{ type: "reminder", taskId, reminderId, title, dueDate, dueTime, at }。同一 endpoint 重发会覆盖。',
       security: BEARER_SECURITY,
       request: {
         body: {
@@ -70,13 +75,13 @@ export function registerPushRoutes(app: OpenAPIHono<AppEnv>): void {
     }),
     async c => {
       const {endpoint, keys, device} = c.req.valid('json');
-      const {hub, sessionId} = c.get('auth');
-      const result = await hub.addPushSubscription(sessionId, {
-        endpoint,
-        keys,
-        device: device ?? null,
-      });
-      return c.json(unwrap(result), 200);
+      const result = await addPushSubscription(
+        await database(c),
+        c.get('auth').userId,
+        {endpoint, keys, device: device ?? null},
+        Date.now(),
+      );
+      return c.json(result, 200);
     },
   );
 
@@ -96,12 +101,13 @@ export function registerPushRoutes(app: OpenAPIHono<AppEnv>): void {
       },
     }),
     async c => {
-      const {hub, sessionId} = c.get('auth');
       const {endpoint} = c.req.valid('query');
-      return c.json(
-        unwrap(await hub.removePushSubscription(sessionId, endpoint)),
-        200,
+      const result = await removePushSubscription(
+        await database(c),
+        c.get('auth').userId,
+        endpoint,
       );
+      return c.json(result, 200);
     },
   );
 
@@ -130,8 +136,14 @@ export function registerPushRoutes(app: OpenAPIHono<AppEnv>): void {
       },
     }),
     async c => {
-      const {hub, sessionId} = c.get('auth');
-      return c.json(unwrap(await hub.sendTestPush(sessionId)), 200);
+      const result = await sendTestPush(
+        await database(c),
+        c.env,
+        configFor(c.env),
+        c.get('auth').userId,
+        Date.now(),
+      );
+      return c.json(result, 200);
     },
   );
 }

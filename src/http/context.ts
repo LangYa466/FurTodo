@@ -1,39 +1,30 @@
 import type {Context, MiddlewareHandler} from 'hono';
-import {readConfig, type AppConfig} from '../config';
-import {
-  parseJournalEntry,
-  type JournalEntry,
-  type Kind,
-  type Settings,
-} from '../domain/model';
+import {configFor} from '../config';
+import {DatabaseConnection, type Database} from '../db/client';
+import type {Kind, StoredEntity} from '../domain/model';
 import {
   PATCH_SCHEMAS,
   taskPatchSchema,
   type TaskPatch,
 } from '../domain/schemas';
-import type {
-  BeginReadOptions,
-  MutationOutcome,
-  PullPlan,
-  ReadQuotaGrant,
-  ValidatedMutation,
-} from '../hub/types';
-import type {UserHub} from '../hub/user-hub';
-import {verifyToken} from '../lib/crypto';
-import {AppError, unwrap} from '../lib/errors';
+import {verifyToken, type TokenClaims} from '../lib/crypto';
+import {AppError} from '../lib/errors';
 import {uuidV7} from '../lib/ids';
-import type {QuotaCharger} from '../store/scan';
-
-export interface AuthInfo {
-  userId: string;
-  sessionId: string;
-  hub: DurableObjectStub<UserHub>;
-}
+import {authorize, type AuthInfo} from '../store/accounts';
+import {
+  applyMutations,
+  type MutationOutcome,
+  type ValidatedMutation,
+} from '../store/mutations';
+import {quotaExceeded, recordUsage} from '../store/quota';
 
 export interface AppVariables {
   requestId: string;
+  database: DatabaseConnection;
+  /** Bearer token claims, set on every authenticated `/v1` path. */
+  claims: TokenClaims;
+  /** The authorized session, set on every authenticated path but logout. */
   auth: AuthInfo;
-  readMeter: ReadQuotaMeter | undefined;
 }
 
 export interface AppEnv {
@@ -43,27 +34,35 @@ export interface AppEnv {
 
 export type AppContext = Context<AppEnv>;
 
-const configCache = new WeakMap<Env, AppConfig>();
+/** `/v1` paths that skip Bearer auth. */
+const PUBLIC_V1_PATHS: Record<string, true> = {
+  '/v1/auth/github/authorize': true,
+  '/v1/auth/github/callback': true,
+  '/v1/auth/token': true,
+  '/v1/push/vapid-public-key': true,
+};
 
-/** Returns the parsed config, once per `env` object. */
-export function configFor(env: Env): AppConfig {
-  let config = configCache.get(env);
-  if (!config) {
-    config = readConfig(env);
-    configCache.set(env, config);
+/** Paths that need only a valid token, so expired sessions can log out. */
+const TOKEN_ONLY_PATHS: Record<string, true> = {'/v1/auth/logout': true};
+
+/** Gives the request a lazily opened database and closes it afterwards. */
+export const withDatabase: MiddlewareHandler<AppEnv> = async (c, next) => {
+  const connection = new DatabaseConnection(c.env.HYPERDRIVE.connectionString);
+  c.set('database', connection);
+  try {
+    await next();
+  } finally {
+    c.executionCtx.waitUntil(connection.close());
   }
-  return config;
-}
-
-export function hubFor(env: Env, userId: string): DurableObjectStub<UserHub> {
-  return env.USER_HUB.get(env.USER_HUB.idFromName(userId));
-}
+};
 
 /**
- * Requires a Bearer access token. Only the HMAC is checked here, so forged
- * tokens never reach storage; the user's hub validates the session itself.
+ * Requires a Bearer access token on `/v1`. The HMAC is checked first, so
+ * forged tokens never reach the database; then the session is authorized.
  */
-export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
+export const authenticate: MiddlewareHandler<AppEnv> = async (c, next) => {
+  const path = c.req.path;
+  if (PUBLIC_V1_PATHS[path]) return next();
   const header = c.req.header('authorization') ?? '';
   const match = /^Bearer\s+(.+)$/i.exec(header);
   const token = match?.[1]?.trim() ?? '';
@@ -73,95 +72,53 @@ export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
   if (!claims) {
     throw new AppError(401, 'invalid_token', '缺少或无效的 Bearer token');
   }
-  c.set('auth', {...claims, hub: hubFor(c.env, claims.userId)});
-  await next();
-  const refund = c.get('readMeter')?.release();
-  if (refund) c.executionCtx.waitUntil(refund);
+  c.set('claims', claims);
+  if (!TOKEN_ONLY_PATHS[path]) {
+    c.set(
+      'auth',
+      await authorize(
+        c.get('database'),
+        c.env,
+        configFor(c.env),
+        claims,
+        Date.now(),
+      ),
+    );
+  }
+  return next();
 };
 
-/** Minimum top-up so a long scan does not call the hub for every page. */
-const TOP_UP_MINIMUM = {reads: 200, lists: 5} as const;
+export function database(c: AppContext): Promise<Database> {
+  return c.get('database').get();
+}
 
-/**
- * Meters Worker-side KV reads: spends the quota reserved by `beginRead`, asks
- * the hub for more when it runs out, and refunds the rest when released.
- */
-export class ReadQuotaMeter implements QuotaCharger {
-  private remaining: ReadQuotaGrant;
-
-  constructor(
-    private readonly hub: DurableObjectStub<UserHub>,
-    private readonly sessionId: string,
-    private readonly day: string,
-    grant: ReadQuotaGrant,
-  ) {
-    this.remaining = {...grant};
-  }
-
-  async charge(kind: 'reads' | 'lists', count: number): Promise<void> {
-    if (count <= 0) return;
-    if (this.remaining[kind] < count) {
-      const {granted, retryAfter} = await this.hub.topUpReadQuota(
-        this.sessionId,
-        kind,
-        Math.max(count - this.remaining[kind], TOP_UP_MINIMUM[kind]),
-        this.day,
-      );
-      this.remaining[kind] += granted;
-      if (this.remaining[kind] < count) {
-        throw new AppError(
-          429,
-          'quota_exceeded',
-          `今日 KV ${kind} 配额已用完`,
-          {kind},
-          retryAfter,
-        );
-      }
-    }
-    this.remaining[kind] -= count;
-  }
-
-  /** Refunds unused quota; returns the RPC to wait on, or null if none. */
-  release(): Promise<void> | null {
-    if (this.remaining.reads === 0 && this.remaining.lists === 0) return null;
-    const leftover = this.remaining;
-    this.remaining = {reads: 0, lists: 0};
-    return this.hub.refundReadQuota(leftover, this.day);
+/** Refuses a read once today's read quota is used up. */
+export function requireReadQuota(c: AppContext): void {
+  const config = configFor(c.env);
+  if (c.get('auth').usage.reads >= config.dailyQuota.reads) {
+    throw quotaExceeded(config, 'reads', Date.now());
   }
 }
 
-export interface ReadSession {
-  userId: string;
-  now: number;
-  settings: Settings;
-  committedStamp: number;
-  pullPlan: PullPlan | null;
-  overlay: Map<string, JournalEntry>;
-  meter: ReadQuotaMeter;
+/** Charges `rows` entity reads once the response is sent. */
+export function chargeReads(c: AppContext, rows: number): void {
+  if (rows <= 0) return;
+  const config = configFor(c.env);
+  const {userId} = c.get('auth');
+  c.get('database').defer(db =>
+    recordUsage(db, config, userId, 'reads', rows, Date.now()),
+  );
 }
 
-/** Authorizes the request, reserves read quota, and fetches the overlay. */
-export async function openReadSession(
+/** Loads entities for the authorized user and charges them as reads. */
+export async function readEntities(
   c: AppContext,
-  options: BeginReadOptions,
-): Promise<ReadSession> {
-  const {hub, sessionId} = c.get('auth');
-  const begun = unwrap(await hub.beginRead(sessionId, options));
-  const meter = new ReadQuotaMeter(hub, sessionId, begun.day, begun.grant);
-  c.set('readMeter', meter);
-  const overlay = new Map<string, JournalEntry>();
-  for (const raw of begun.journal) {
-    overlay.set(raw.key, parseJournalEntry(raw));
-  }
-  return {
-    userId: begun.userId,
-    now: begun.now,
-    settings: begun.settings,
-    committedStamp: begun.committedStamp,
-    pullPlan: begun.pullPlan,
-    overlay,
-    meter,
-  };
+  load: (db: Database, userId: number) => Promise<StoredEntity[]>,
+): Promise<StoredEntity[]> {
+  requireReadQuota(c);
+  const loaded = await load(await database(c), c.get('auth').userId);
+  chargeReads(c, loaded.length);
+  return loaded;
 }
 
 export interface ValidationIssue {
@@ -249,13 +206,25 @@ export function parsePatchOrThrow(
   return validation.patch;
 }
 
+/** Applies mutations as the authorized user; see `applyMutations`. */
+export async function applyMutationBatch(
+  c: AppContext,
+  mutations: ValidatedMutation[],
+): Promise<MutationOutcome[]> {
+  return applyMutations(
+    await database(c),
+    configFor(c.env),
+    c.get('auth').userId,
+    mutations,
+  );
+}
+
 /** Applies one mutation and throws its rejection as an `AppError`. */
 export async function applyMutation(
   c: AppContext,
   mutation: ValidatedMutation,
 ): Promise<MutationOutcome> {
-  const {hub, sessionId} = c.get('auth');
-  const [outcome] = unwrap(await hub.applyMutations(sessionId, [mutation]));
+  const [outcome] = await applyMutationBatch(c, [mutation]);
   if (!outcome) throw new AppError(500, 'internal_error', 'mutation 没有结果');
   if (outcome.status === 'rejected' && outcome.error) {
     const {status, code, message, retryAfter} = outcome.error;

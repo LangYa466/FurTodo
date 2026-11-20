@@ -2,7 +2,8 @@ import {OpenAPIHono} from '@hono/zod-openapi';
 import {Scalar} from '@scalar/hono-api-reference';
 import {cors} from 'hono/cors';
 import {HTTPException} from 'hono/http-exception';
-import {configFor, requireAuth, type AppEnv} from './http/context';
+import {configFor} from './config';
+import {authenticate, withDatabase, type AppEnv} from './http/context';
 import {randomBase64Url} from './lib/crypto';
 import {AppError} from './lib/errors';
 import {registerAuthRoutes} from './routes/auth';
@@ -13,18 +14,9 @@ import {registerMetaRoutes} from './routes/meta';
 import {registerPushRoutes} from './routes/push';
 import {registerSyncRoutes} from './routes/sync';
 import {registerViewRoutes} from './routes/views';
-
-export {UserHub} from './hub/user-hub';
+import {handleScheduled} from './scheduled';
 
 const REQUEST_ID_BYTES = 8;
-
-/** `/v1` paths that skip Bearer auth. */
-const PUBLIC_V1_PATHS: Record<string, true> = {
-  '/v1/auth/github/authorize': true,
-  '/v1/auth/github/callback': true,
-  '/v1/auth/token': true,
-  '/v1/push/vapid-public-key': true,
-};
 
 const app = new OpenAPIHono<AppEnv>({
   defaultHook: (result, c) => {
@@ -82,10 +74,8 @@ app.use(
   }),
 );
 
-app.use('/v1/*', async (c, next) => {
-  if (PUBLIC_V1_PATHS[c.req.path]) return next();
-  return requireAuth(c, next);
-});
+app.use('*', withDatabase);
+app.use('/v1/*', authenticate);
 
 registerMetaRoutes(app);
 registerAuthRoutes(app);
@@ -109,7 +99,7 @@ app.doc31('/openapi.json', c => ({
     title: 'FurTodo API',
     version: '1.0.0',
     description:
-      'GitHub 账号创建满一年即可使用的待办事项后端（Cloudflare Workers + KV + Durable Objects + Drizzle ORM）。完整对接说明：/integration.md。所有时间响应均为 UTC ISO 8601；日期为 YYYY-MM-DD。',
+      'GitHub 账号创建满一年即可使用的待办事项后端（Cloudflare Workers + Hyperdrive + PostgreSQL + Drizzle ORM）。完整对接说明：/integration.md。所有时间响应均为 UTC ISO 8601；日期为 YYYY-MM-DD。',
   },
   servers: [{url: configFor(c.env).publicBaseUrl}],
   tags: [
@@ -184,5 +174,7 @@ app.notFound(c =>
   ),
 );
 
-// The Workers runtime loads the default export as the fetch handler.
-export default app satisfies ExportedHandler<Env>;
+export default {
+  fetch: app.fetch,
+  scheduled: handleScheduled,
+} satisfies ExportedHandler<Env>;

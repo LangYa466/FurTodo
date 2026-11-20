@@ -3,25 +3,39 @@
   "name": "furtodo-server",
   "main": "src/index.ts",
   "compatibility_date": "2026-11-19",
+  // node-postgres (pg) needs the Node.js APIs.
+  "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
   "routes": [{ "pattern": "todo.example.com", "custom_domain": true }],
 
-  // Data plane: one key per entity (e:{userId}:{kind}:{id}) and per attachment
-  // blob (b:{userId}:{attachmentId}).
-  "kv_namespaces": [{ "binding": "DATA", "id": "00000000000000000000000000000000" }],
+  // Requests run several sequential queries, so the Worker should run near the
+  // database rather than near the user.
+  "placement": { "mode": "smart" },
 
-  // Control plane: one Durable Object per user for sessions, daily quotas,
-  // write serialization, reminder alarms, and Web Push.
-  "durable_objects": { "bindings": [{ "name": "USER_HUB", "class_name": "UserHub" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["UserHub"] }],
+  // PostgreSQL through Hyperdrive. Create the config with caching disabled,
+  // because sessions, quotas, and sync must read their own writes:
+  //   npx wrangler hyperdrive create furtodo-db --caching-disabled --connection-string="$DATABASE_URL"
+  // Put the printed id here, and run `npm run db:migrate` with the same
+  // DATABASE_URL before deploying.
+  "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "REPLACE_WITH_HYPERDRIVE_CONFIG_ID" }],
+
+  // The UserHub Durable Object was replaced by PostgreSQL; v2 deletes the class
+  // and its storage.
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["UserHub"] },
+    { "tag": "v2", "deleted_classes": ["UserHub"] }
+  ],
+
+  // Every minute: send due reminders. Hourly: purge expired data.
+  "triggers": { "crons": ["* * * * *", "17 * * * *"] },
 
   // Per-IP limit on the unauthenticated login endpoints, counted per location.
   "ratelimits": [{ "name": "AUTH_LIMITER", "namespace_id": "4201", "simple": { "limit": 30, "period": 60 } }],
 
-  // Drizzle's generated migrations bundle imports each migration.sql as text.
+  // The integration guide is bundled as text.
   "rules": [
-    { "type": "Text", "globs": ["**/*.md", "**/*.sql"], "fallthrough": true }
+    { "type": "Text", "globs": ["**/*.md"], "fallthrough": true }
   ],
 
   "observability": {
@@ -45,16 +59,13 @@
     "ALLOWED_REDIRECT_URIS": "http://localhost:*/*,http://127.0.0.1:*/*,furtodo://*,https://*.example.com/*",
     "VAPID_SUBJECT": "mailto:user@example.com",
 
-    // Per-user daily quotas; they reset at midnight in QUOTA_TIMEZONE.
-    // KV has no Cloudflare spending limit, so these caps are the only brake:
-    // KV Paid includes 10M reads, 1M writes, 1M lists per month, and the
-    // per-user ceilings below are sized so that a user burning all of them
-    // costs about $0.50/month (reads dominate) instead of $1.86/month.
+    // Per-user daily quotas bound the database work one account can cause;
+    // reads and writes count entity rows. They reset at midnight in
+    // QUOTA_TIMEZONE.
     "QUOTA_TIMEZONE": "Asia/Shanghai",
     "QUOTA_REQUESTS_PER_DAY": "20000",
-    "QUOTA_KV_READS_PER_DAY": "20000",
-    "QUOTA_KV_WRITES_PER_DAY": "1000",
-    "QUOTA_KV_LISTS_PER_DAY": "400",
+    "QUOTA_READS_PER_DAY": "200000",
+    "QUOTA_WRITES_PER_DAY": "10000",
     "QUOTA_LOGINS_PER_DAY": "30",
     "QUOTA_PUSH_PER_DAY": "500",
 

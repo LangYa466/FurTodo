@@ -1,19 +1,24 @@
 import {createRoute, z, type OpenAPIHono} from '@hono/zod-openapi';
-import type {ApiEntity} from '../domain/model';
+import type {ApiEntity, StoredEntity} from '../domain/model';
 import {
   idSchema,
   recurrenceSchema,
   tagEntitySchema,
   taskEntitySchema,
 } from '../domain/schemas';
-import {openReadSession, parsePatchOrThrow, type AppEnv} from '../http/context';
+import {
+  applyMutationBatch,
+  parsePatchOrThrow,
+  readEntities,
+  type AppEnv,
+} from '../http/context';
 import {BEARER_SECURITY, errorResponses, jsonContent} from '../http/openapi';
-import type {ValidatedMutation} from '../hub/types';
 import {parseCapture, type ParsedCapture} from '../lib/capture';
-import {AppError, unwrap} from '../lib/errors';
+import {AppError} from '../lib/errors';
 import {uuidV7} from '../lib/ids';
 import {localDate} from '../lib/time';
-import {scanMetadata} from '../store/scan';
+import {findLiveEntities} from '../store/entities';
+import type {ValidatedMutation} from '../store/mutations';
 
 const parsedCaptureSchema = z
   .object({
@@ -86,6 +91,15 @@ interface NewTag {
   name: string;
 }
 
+/** Returns the lower-cased names of live tags or lists with their ids. */
+function namesOf(entities: StoredEntity[]): Array<{id: string; name: string}> {
+  return entities.flatMap(entity =>
+    typeof entity.data.name === 'string'
+      ? [{id: entity.id, name: entity.data.name.toLowerCase()}]
+      : [],
+  );
+}
+
 export function registerCaptureRoutes(app: OpenAPIHono<AppEnv>): void {
   app.openapi(
     createRoute({
@@ -129,17 +143,10 @@ export function registerCaptureRoutes(app: OpenAPIHono<AppEnv>): void {
     }),
     async c => {
       const body = c.req.valid('json');
-      const session = await openReadSession(c, {
-        journal: {mode: 'scan'},
-        reserveLists: 2,
-      });
-      const {timezone, weekStart} = session.settings;
+      const now = Date.now();
+      const {timezone, weekStart} = c.get('auth').settings;
       const parsed = body.parse
-        ? parseCapture(body.text, {
-            now: session.now,
-            timeZone: timezone,
-            weekStart,
-          })
+        ? parseCapture(body.text, {now, timeZone: timezone, weekStart})
         : unparsedCapture(body.text);
       if (!parsed.title) {
         throw new AppError(400, 'validation_error', '解析后没有剩余任务标题', {
@@ -151,18 +158,10 @@ export function registerCaptureRoutes(app: OpenAPIHono<AppEnv>): void {
       // Tag names match case-insensitively; unknown tags are created.
       const tagIdByName = new Map<string, string>();
       if (parsed.tags.length > 0) {
-        const tagRows = await scanMetadata(
-          c.env.DATA,
-          session.userId,
-          'tag',
-          session.meter,
-          session.overlay,
+        const tags = await readEntities(c, (db, userId) =>
+          findLiveEntities(db, userId, 'tag'),
         );
-        for (const row of tagRows.values()) {
-          if (!row.metadata.deletedAt && row.metadata.name) {
-            tagIdByName.set(row.metadata.name.toLowerCase(), row.id);
-          }
-        }
+        for (const tag of namesOf(tags)) tagIdByName.set(tag.name, tag.id);
       }
       const tagIds: string[] = [];
       const newTags: NewTag[] = [];
@@ -170,7 +169,7 @@ export function registerCaptureRoutes(app: OpenAPIHono<AppEnv>): void {
         const key = name.toLowerCase();
         let tagId = tagIdByName.get(key);
         if (!tagId) {
-          tagId = uuidV7(session.now);
+          tagId = uuidV7(now);
           tagIdByName.set(key, tagId);
           newTags.push({id: tagId, name});
         }
@@ -181,17 +180,10 @@ export function registerCaptureRoutes(app: OpenAPIHono<AppEnv>): void {
       // by prefix.
       let listId = body.listId ?? null;
       if (body.listId === undefined && parsed.list) {
-        const listRows = await scanMetadata(
-          c.env.DATA,
-          session.userId,
-          'list',
-          session.meter,
-          session.overlay,
-        );
-        const lists = [...listRows.values()].flatMap(row =>
-          !row.metadata.deletedAt && row.metadata.name
-            ? [{id: row.id, name: row.metadata.name.toLowerCase()}]
-            : [],
+        const lists = namesOf(
+          await readEntities(c, (db, userId) =>
+            findLiveEntities(db, userId, 'list'),
+          ),
         );
         const wanted = parsed.list.toLowerCase();
         const match =
@@ -223,7 +215,7 @@ export function registerCaptureRoutes(app: OpenAPIHono<AppEnv>): void {
         tagIds,
         listId,
         recurrence: parsed.recurrence,
-        myDay: body.myDay ? localDate(session.now, timezone) : null,
+        myDay: body.myDay ? localDate(now, timezone) : null,
       };
       const mutations: ValidatedMutation[] = [
         ...newTags.map((tag): ValidatedMutation => ({
@@ -235,12 +227,11 @@ export function registerCaptureRoutes(app: OpenAPIHono<AppEnv>): void {
         {
           op: 'upsert',
           type: 'task',
-          id: uuidV7(session.now),
+          id: uuidV7(now),
           data: parsePatchOrThrow('task', taskFields),
         },
       ];
-      const {hub, sessionId} = c.get('auth');
-      const outcomes = unwrap(await hub.applyMutations(sessionId, mutations));
+      const outcomes = await applyMutationBatch(c, mutations);
       const taskOutcome = outcomes.at(-1);
       if (taskOutcome?.status === 'rejected' && taskOutcome.error) {
         const {status, code, message} = taskOutcome.error;

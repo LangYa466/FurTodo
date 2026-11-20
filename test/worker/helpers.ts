@@ -1,5 +1,9 @@
+import {createScheduledController} from 'cloudflare:test';
 import {env, exports} from 'cloudflare:workers';
+import {drizzle, type NodePgDatabase} from 'drizzle-orm/node-postgres';
+import {Client} from 'pg';
 import {vi} from 'vitest';
+import worker from '../../src/index';
 
 export const BASE = 'https://todo.example.com';
 export const CLIENT_REDIRECT = 'http://localhost:5173/auth/callback';
@@ -11,6 +15,7 @@ export const OLD_ENOUGH_DAYS = 1000;
 export const TOO_NEW_DAYS = 30;
 
 const MS_PER_DAY = 86_400_000;
+const UNIQUE_ID_BASE = 1_000_000_000;
 
 interface GithubUserMock {
   id: number;
@@ -25,6 +30,8 @@ function createdAtFor(days: number): string {
 
 const usersByCode = new Map<string, GithubUserMock>();
 const usersByToken = new Map<string, GithubUserMock>();
+/** While true, the GitHub API answers 503. */
+let githubDown = false;
 /** Requests the mocked push service has received. */
 export const pushCalls: Array<{
   url: string;
@@ -69,6 +76,7 @@ export function installFetchMock(): void {
         return json({access_token: token, scope: 'read:user'});
       }
       if (url.host === 'gh-api.test') {
+        if (githubDown) return json({message: 'Service Unavailable'}, 503);
         const user = usersByToken.get(
           (request.headers.get('authorization') ?? '').replace('Bearer ', ''),
         );
@@ -214,7 +222,43 @@ export async function login(
   return body.access_token;
 }
 
-/** Returns the UserHub Durable Object stub for a user id. */
-export function hubStub(uid: number): DurableObjectStub {
-  return env.USER_HUB.get(env.USER_HUB.idFromName(String(uid)));
+/**
+ * Returns a GitHub user id for one test. Ids are random so tests never share
+ * users, even against a database reused through TEST_DATABASE_URL.
+ */
+export function uniqueUserId(): number {
+  return UNIQUE_ID_BASE + Math.floor(Math.random() * UNIQUE_ID_BASE);
+}
+
+/** Makes GitHub reject every OAuth token issued to the user. */
+export function revokeGithubTokens(userId: number): void {
+  for (const [token, user] of usersByToken) {
+    if (user.id === userId) usersByToken.delete(token);
+  }
+}
+
+export function setGithubDown(down: boolean): void {
+  githubDown = down;
+}
+
+/** Runs the Worker's cron handler as if `cron` had fired. */
+export async function runCron(cron: string): Promise<void> {
+  await worker.scheduled(createScheduledController({cron}), env);
+}
+
+/** Runs `work` on a direct database connection, to arrange test state. */
+export async function withTestDatabase<T>(
+  work: (db: NodePgDatabase) => Promise<T>,
+): Promise<T> {
+  const client = new Client({
+    connectionString: env.HYPERDRIVE.connectionString,
+  });
+  // pg-cloudflare reports its own socket closing as an error after end().
+  client.on('error', () => undefined);
+  await client.connect();
+  try {
+    return await work(drizzle({client}));
+  } finally {
+    await client.end();
+  }
 }

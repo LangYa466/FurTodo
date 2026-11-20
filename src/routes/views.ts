@@ -1,22 +1,17 @@
 import {createRoute, z, type OpenAPIHono} from '@hono/zod-openapi';
 import {toApiEntity, type ApiEntity, type StoredEntity} from '../domain/model';
 import {dateSchema, taskEntitySchema} from '../domain/schemas';
-import {
-  buildMatrix,
-  buildToday,
-  buildUpcoming,
-  isOpenMetadata,
-  todayFilter,
-} from '../domain/views';
-import {
-  openReadSession,
-  type AppContext,
-  type AppEnv,
-  type ReadSession,
-} from '../http/context';
+import {buildMatrix, buildToday, buildUpcoming} from '../domain/views';
+import {readEntities, type AppContext, type AppEnv} from '../http/context';
 import {BEARER_SECURITY, errorResponses, jsonContent} from '../http/openapi';
-import {localDate} from '../lib/time';
-import {loadEntities, scanMetadata, type MetadataRow} from '../store/scan';
+import {addDays, localDate} from '../lib/time';
+import {
+  dueBefore,
+  findTasks,
+  openTasks,
+  todayCandidates,
+  type Conditions,
+} from '../store/entities';
 
 const MAX_UPCOMING_DAYS = 62;
 const DEFAULT_UPCOMING_DAYS = 7;
@@ -72,38 +67,11 @@ const matrixViewSchema = z
   })
   .openapi('MatrixView');
 
-interface LoadedTasks {
-  session: ReadSession;
-  tasks: StoredEntity[];
-}
-
-/**
- * Loads the tasks a view needs. `filterFor` builds the metadata filter once
- * the read session (and with it the user's time zone) is known.
- */
-async function loadTasks(
+function loadTasks(
   c: AppContext,
-  filterFor: (session: ReadSession) => (row: MetadataRow) => boolean,
-): Promise<LoadedTasks> {
-  const session = await openReadSession(c, {
-    journal: {mode: 'scan'},
-    reserveLists: 2,
-    reserveReads: 200,
-  });
-  const rows = await scanMetadata(
-    c.env.DATA,
-    session.userId,
-    'task',
-    session.meter,
-    session.overlay,
-  );
-  const {entities} = await loadEntities(
-    c.env.DATA,
-    [...rows.values()].filter(filterFor(session)),
-    session.meter,
-    session.overlay,
-  );
-  return {session, tasks: [...entities.values()]};
+  conditions: Conditions,
+): Promise<StoredEntity[]> {
+  return readEntities(c, (db, userId) => findTasks(db, userId, conditions));
 }
 
 function toApiTasks(tasks: StoredEntity[], timeZone: string): ApiEntity[] {
@@ -131,18 +99,11 @@ export function registerViewRoutes(app: OpenAPIHono<AppEnv>): void {
       },
     }),
     async c => {
-      const requested = c.req.valid('query').date;
-      const dateFor = (session: ReadSession) =>
-        requested ?? localDate(session.now, session.settings.timezone);
-      const {session, tasks} = await loadTasks(c, readSession => {
-        const isCandidate = todayFilter(
-          dateFor(readSession),
-          readSession.settings.timezone,
-        );
-        return row => isCandidate(row.metadata);
-      });
-      const timeZone = session.settings.timezone;
-      const view = buildToday(tasks, dateFor(session), session.settings);
+      const {settings} = c.get('auth');
+      const timeZone = settings.timezone;
+      const date = c.req.valid('query').date ?? localDate(Date.now(), timeZone);
+      const tasks = await loadTasks(c, todayCandidates(date, timeZone));
+      const view = buildToday(tasks, date, settings);
       return c.json(
         {
           date: view.date,
@@ -184,14 +145,16 @@ export function registerViewRoutes(app: OpenAPIHono<AppEnv>): void {
     }),
     async c => {
       const query = c.req.valid('query');
-      const {session, tasks} = await loadTasks(
+      const timeZone = c.get('auth').settings.timezone;
+      const today = localDate(Date.now(), timeZone);
+      const from = query.from ?? today;
+      // Overdue tasks are due before today, so the bound never drops below it.
+      const until = addDays(from, query.days);
+      const tasks = await loadTasks(
         c,
-        () => row =>
-          isOpenMetadata(row.metadata) && Boolean(row.metadata.dueDate),
+        dueBefore(until > today ? until : today),
       );
-      const timeZone = session.settings.timezone;
-      const today = localDate(session.now, timeZone);
-      const view = buildUpcoming(tasks, query.from ?? today, query.days, today);
+      const view = buildUpcoming(tasks, from, query.days, today);
       return c.json(
         {
           from: view.from,
@@ -220,14 +183,11 @@ export function registerViewRoutes(app: OpenAPIHono<AppEnv>): void {
       },
     }),
     async c => {
-      const {session, tasks} = await loadTasks(
-        c,
-        () => row => isOpenMetadata(row.metadata),
-      );
-      const timeZone = session.settings.timezone;
+      const timeZone = c.get('auth').settings.timezone;
+      const tasks = await loadTasks(c, openTasks());
       const view = buildMatrix(
         tasks,
-        localDate(session.now, timeZone),
+        localDate(Date.now(), timeZone),
         MATRIX_UNCLASSIFIED_LIMIT,
       );
       return c.json(

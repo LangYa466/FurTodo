@@ -6,8 +6,9 @@ import {
   type GithubProfile,
 } from '../auth/github';
 import {isAllowedRedirect} from '../auth/redirect';
+import {configFor} from '../config';
 import {settingsEntitySchema} from '../domain/schemas';
-import {configFor, hubFor, type AppContext, type AppEnv} from '../http/context';
+import {database, type AppContext, type AppEnv} from '../http/context';
 import {BEARER_SECURITY, errorResponses, jsonContent} from '../http/openapi';
 import {
   openJson,
@@ -17,7 +18,14 @@ import {
   signToken,
   verifyToken,
 } from '../lib/crypto';
-import {AppError, unwrap} from '../lib/errors';
+import {AppError} from '../lib/errors';
+import {
+  activateSession,
+  createPendingSession,
+  createPersonalToken,
+  deleteSession,
+  listSessions,
+} from '../store/accounts';
 
 const STATE_TTL_MS = 10 * 60_000;
 const PKCE_VERIFIER_RE = /^[A-Za-z0-9\-._~]{43,128}$/;
@@ -279,24 +287,32 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
           error_description: `GitHub 账号创建需满 ${config.minAccountAgeDays} 天（当前 ${ageDays} 天，创建于 ${profile.createdAt.slice(0, 10)}）`,
         });
       }
-      const userId = String(profile.id);
-      const created = await hubFor(c.env, userId).createPendingSession({
-        userId,
-        profile,
-        githubToken: exchange.accessToken,
-        codeChallenge: state.codeChallenge,
-        redirectUri: state.redirectUri,
-        userAgent: userAgentOf(c),
-      });
-      if (!created.ok) {
+      let sessionId: string;
+      try {
+        sessionId = await createPendingSession(
+          await database(c),
+          c.env,
+          config,
+          {
+            userId: profile.id,
+            profile,
+            githubToken: exchange.accessToken,
+            codeChallenge: state.codeChallenge,
+            redirectUri: state.redirectUri,
+            userAgent: userAgentOf(c),
+          },
+          Date.now(),
+        );
+      } catch (error: unknown) {
+        if (!(error instanceof AppError)) throw error;
         return redirectToClient({
-          error: created.error.code,
-          error_description: created.error.message,
+          error: error.code,
+          error_description: error.message,
         });
       }
       const code = await signToken(c.env.TOKEN_SECRET, 'ftc', {
-        userId,
-        sessionId: created.value.sessionId,
+        userId: String(profile.id),
+        sessionId,
       });
       return redirectToClient({code});
     },
@@ -342,13 +358,17 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
           oauthError: 'invalid_grant',
         });
       }
-      const account = unwrap(
-        await hubFor(c.env, claims.userId).activateSession(
-          claims.sessionId,
-          body.code_verifier,
-          body.redirect_uri,
-          userAgentOf(c),
-        ),
+      const account = await activateSession(
+        await database(c),
+        configFor(c.env),
+        {
+          userId: Number(claims.userId),
+          sessionId: claims.sessionId,
+          codeVerifier: body.code_verifier,
+          redirectUri: body.redirect_uri,
+          userAgent: userAgentOf(c),
+        },
+        Date.now(),
       );
       const accessToken = await signToken(c.env.TOKEN_SECRET, 'ftk', claims);
       return c.json(
@@ -376,8 +396,13 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
       },
     }),
     async c => {
-      const {hub, sessionId} = c.get('auth');
-      return c.json(unwrap(await hub.logout(sessionId)), 200);
+      const {userId, sessionId} = c.get('claims');
+      const revoked = await deleteSession(
+        await database(c),
+        Number(userId),
+        sessionId,
+      );
+      return c.json({revoked}, 200);
     },
   );
 
@@ -397,8 +422,9 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
       },
     }),
     async c => {
-      const {hub, sessionId} = c.get('auth');
-      return c.json({sessions: unwrap(await hub.listSessions(sessionId))}, 200);
+      const {userId, sessionId} = c.get('auth');
+      const sessions = await listSessions(await database(c), userId, sessionId);
+      return c.json({sessions}, 200);
     },
   );
 
@@ -416,9 +442,10 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
       },
     }),
     async c => {
-      const {hub, sessionId} = c.get('auth');
+      const {userId} = c.get('auth');
       const target = c.req.valid('param').id;
-      return c.json(unwrap(await hub.revokeSession(sessionId, target)), 200);
+      const revoked = await deleteSession(await database(c), userId, target);
+      return c.json({revoked}, 200);
     },
   );
 
@@ -457,13 +484,18 @@ export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
       },
     }),
     async c => {
-      const {hub, sessionId, userId} = c.get('auth');
+      const {userId, sessionId} = c.get('auth');
       const body = c.req.valid('json');
-      const session = unwrap(
-        await hub.createPersonalToken(sessionId, body.name, body.expiresInDays),
+      const session = await createPersonalToken(
+        await database(c),
+        userId,
+        sessionId,
+        body.name,
+        body.expiresInDays,
+        Date.now(),
       );
       const token = await signToken(c.env.TOKEN_SECRET, 'ftk', {
-        userId,
+        userId: String(userId),
         sessionId: session.id,
       });
       return c.json({token, session}, 201);

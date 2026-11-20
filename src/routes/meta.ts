@@ -1,6 +1,7 @@
 import type {OpenAPIHono} from '@hono/zod-openapi';
 import integrationGuide from '../../docs/INTEGRATION.md';
-import {configFor, type AppEnv} from '../http/context';
+import {configFor} from '../config';
+import type {AppEnv} from '../http/context';
 import {randomBase64Url} from '../lib/crypto';
 import {devLoginPage} from './dev-login';
 

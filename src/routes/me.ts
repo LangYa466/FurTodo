@@ -1,17 +1,26 @@
 import {createRoute, z, type OpenAPIHono} from '@hono/zod-openapi';
-import {SETTINGS_ID, toApiEntity} from '../domain/model';
+import {configFor} from '../config';
+import {SETTINGS_ID, toApiEntity, unsavedSettingsEntity} from '../domain/model';
 import {settingsEntitySchema, settingsPatchSchema} from '../domain/schemas';
-import {applyMutation, parsePatchOrThrow, type AppEnv} from '../http/context';
+import {
+  applyMutation,
+  database,
+  parsePatchOrThrow,
+  type AppEnv,
+} from '../http/context';
 import {BEARER_SECURITY, errorResponses, jsonContent} from '../http/openapi';
-import {AppError, unwrap} from '../lib/errors';
+import {AppError} from '../lib/errors';
+import {accountView} from '../store/accounts';
+import {usageView} from '../store/quota';
 import {accountSchema} from './auth';
 import {readEntity} from './entities';
 
 const quotaCountsSchema = z.object({
   requests: z.int().openapi({description: 'API 请求数'}),
-  reads: z.int().openapi({description: 'KV 读取（每个 key 算 1 次）'}),
-  writes: z.int().openapi({description: 'KV 写入/删除'}),
-  lists: z.int().openapi({description: 'KV 列举（每页 1000 个 key 算 1 次）'}),
+  reads: z.int().openapi({description: '读取的数据条数'}),
+  writes: z
+    .int()
+    .openapi({description: '写入的数据条数（删除清单时连带的任务也算）'}),
   logins: z.int(),
   pushes: z.int().openapi({description: 'Web Push 发送数'}),
 });
@@ -42,8 +51,14 @@ export function registerMeRoutes(app: OpenAPIHono<AppEnv>): void {
       },
     }),
     async c => {
-      const {hub, sessionId} = c.get('auth');
-      return c.json(unwrap(await hub.getAccount(sessionId)), 200);
+      const {userId, sessionId} = c.get('auth');
+      const account = await accountView(
+        await database(c),
+        configFor(c.env),
+        userId,
+        sessionId,
+      );
+      return c.json(account, 200);
     },
   );
 
@@ -60,8 +75,13 @@ export function registerMeRoutes(app: OpenAPIHono<AppEnv>): void {
       },
     }),
     async c => {
-      const {hub, sessionId} = c.get('auth');
-      return c.json(unwrap(await hub.getUsage(sessionId)), 200);
+      const usage = await usageView(
+        await database(c),
+        configFor(c.env),
+        c.get('auth').userId,
+        Date.now(),
+      );
+      return c.json(usage, 200);
     },
   );
 
@@ -80,9 +100,8 @@ export function registerMeRoutes(app: OpenAPIHono<AppEnv>): void {
     async c => {
       const {entity, timeZone} = await readEntity(c, 'settings', SETTINGS_ID);
       if (entity) return c.json(toApiEntity(entity, timeZone), 200);
-      // Never saved: the account view carries the defaults.
-      const {hub, sessionId} = c.get('auth');
-      return c.json(unwrap(await hub.getAccount(sessionId)).settings, 200);
+      // Never saved: the defaults, as revision 0.
+      return c.json(unsavedSettingsEntity(c.get('auth').settings), 200);
     },
   );
 

@@ -1,6 +1,5 @@
 import {createRoute, z, type OpenAPIHono} from '@hono/zod-openapi';
 import {
-  entityKey,
   toApiEntity,
   type ApiEntity,
   type Kind,
@@ -23,22 +22,24 @@ import {
   taskEntitySchema,
   taskPatchSchema,
 } from '../domain/schemas';
-import {
-  filterAndSortTasks,
-  metadataMatchesQuery,
-  type TaskQuery,
-} from '../domain/views';
+import {filterAndSortTasks, type TaskQuery} from '../domain/views';
 import {
   applyMutation,
-  openReadSession,
   parsePatchOrThrow,
+  readEntities,
   type AppContext,
   type AppEnv,
 } from '../http/context';
 import {BEARER_SECURITY, errorResponses, jsonContent} from '../http/openapi';
 import {AppError} from '../lib/errors';
 import {uuidV7} from '../lib/ids';
-import {loadEntities, scanMetadata} from '../store/scan';
+import {
+  findEntity,
+  findLiveEntities,
+  findTasks,
+  findTrash,
+  taskQueryConditions,
+} from '../store/entities';
 
 const DEFAULT_TASK_LIMIT = 500;
 const MAX_TASK_LIMIT = 2000;
@@ -49,53 +50,17 @@ export interface EntityRead {
   timeZone: string;
 }
 
-/** Reads one entity; the journal overlay makes the caller's own writes visible. */
+/** Reads one entity, in the trash or not. */
 export async function readEntity(
   c: AppContext,
   kind: Kind,
   id: string,
 ): Promise<EntityRead> {
-  const {userId} = c.get('auth');
-  const key = entityKey(userId, kind, id);
-  const session = await openReadSession(c, {
-    journal: {mode: 'keys', keys: [key]},
-    reserveReads: 1,
+  const [entity] = await readEntities(c, async (db, userId) => {
+    const found = await findEntity(db, userId, kind, id);
+    return found ? [found] : [];
   });
-  const timeZone = session.settings.timezone;
-  const journal = session.overlay.get(key);
-  if (journal) return {entity: journal.body, timeZone};
-  await session.meter.charge('reads', 1);
-  const entity = await c.env.DATA.get<StoredEntity>(key, 'json');
-  return {entity, timeZone};
-}
-
-async function readLiveEntities(
-  c: AppContext,
-  kind: Kind,
-): Promise<{entities: StoredEntity[]; timeZone: string}> {
-  const session = await openReadSession(c, {
-    journal: {mode: 'scan'},
-    reserveLists: 1,
-    reserveReads: 100,
-  });
-  const rows = await scanMetadata(
-    c.env.DATA,
-    session.userId,
-    kind,
-    session.meter,
-    session.overlay,
-  );
-  const liveRows = [...rows.values()].filter(row => !row.metadata.deletedAt);
-  const {entities} = await loadEntities(
-    c.env.DATA,
-    liveRows,
-    session.meter,
-    session.overlay,
-  );
-  return {
-    entities: [...entities.values()].filter(entity => !entity.deletedAt),
-    timeZone: session.settings.timezone,
-  };
+  return {entity: entity ?? null, timeZone: c.get('auth').settings.timezone};
 }
 
 /** Create bodies: an optional client id plus the kind's fields. */
@@ -179,8 +144,11 @@ function registerSimpleKind(
       },
     }),
     async c => {
-      const {entities, timeZone} = await readLiveEntities(c, spec.kind);
-      const items = entities
+      const live = await readEntities(c, (db, userId) =>
+        findLiveEntities(db, userId, spec.kind),
+      );
+      const timeZone = c.get('auth').settings.timezone;
+      const items = live
         .sort(compareSimpleEntities(spec.kind))
         .map(entity => toApiEntity(entity, timeZone));
       return c.json({items}, 200);
@@ -314,7 +282,7 @@ function registerItemRoutes(
       summary: `删除${label}（移到回收站，30 天内可恢复）`,
       description:
         kind === 'list'
-          ? '清单内的任务会一并移到回收站（后台处理）；恢复清单时一起恢复。'
+          ? '清单内的任务会一并移到回收站；恢复清单时一起恢复。'
           : undefined,
       security: BEARER_SECURITY,
       request: {params: idParamSchema},
@@ -436,29 +404,11 @@ export function registerEntityRoutes(app: OpenAPIHono<AppEnv>): void {
         myDay: params.myDay,
         includeDeleted: params.includeDeleted === 'true',
       };
-      const session = await openReadSession(c, {
-        journal: {mode: 'scan'},
-        reserveLists: 2,
-        reserveReads: 300,
-      });
-      const rows = await scanMetadata(
-        c.env.DATA,
-        session.userId,
-        'task',
-        session.meter,
-        session.overlay,
+      const candidates = await readEntities(c, (db, userId) =>
+        findTasks(db, userId, taskQueryConditions(query)),
       );
-      const candidates = [...rows.values()].filter(row =>
-        metadataMatchesQuery(row.metadata, query),
-      );
-      const {entities} = await loadEntities(
-        c.env.DATA,
-        candidates,
-        session.meter,
-        session.overlay,
-      );
-      const matches = filterAndSortTasks([...entities.values()], query);
-      const timeZone = session.settings.timezone;
+      const matches = filterAndSortTasks(candidates, query);
+      const timeZone = c.get('auth').settings.timezone;
       return c.json(
         {
           items: matches
@@ -585,35 +535,12 @@ export function registerEntityRoutes(app: OpenAPIHono<AppEnv>): void {
       },
     }),
     async c => {
-      const session = await openReadSession(c, {
-        journal: {mode: 'scan'},
-        reserveLists: 2,
-        reserveReads: 100,
-      });
-      const rows = await scanMetadata(
-        c.env.DATA,
-        session.userId,
-        null,
-        session.meter,
-        session.overlay,
-      );
-      const trashedRows = [...rows.values()].filter(
-        row => row.metadata.deletedAt,
-      );
-      const {entities} = await loadEntities(
-        c.env.DATA,
-        trashedRows,
-        session.meter,
-        session.overlay,
-      );
-      const timeZone = session.settings.timezone;
-      const items = [...entities.values()]
-        .filter(entity => entity.deletedAt)
-        .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0))
-        .map(entity => ({
-          type: entity.kind,
-          entity: toApiEntity(entity, timeZone),
-        }));
+      const trashed = await readEntities(c, findTrash);
+      const timeZone = c.get('auth').settings.timezone;
+      const items = trashed.map(entity => ({
+        type: entity.kind,
+        entity: toApiEntity(entity, timeZone),
+      }));
       return c.json({items}, 200);
     },
   );

@@ -1,5 +1,15 @@
+import {and, eq} from 'drizzle-orm';
 import {beforeAll, describe, expect, it} from 'vitest';
-import {apiJson, installFetchMock, login} from './helpers';
+import {entities} from '../../src/db/schema';
+import {HOUSEKEEPING_CRON} from '../../src/scheduled';
+import {
+  apiJson,
+  installFetchMock,
+  login,
+  runCron,
+  uniqueUserId,
+  withTestDatabase,
+} from './helpers';
 
 interface Entity extends Record<string, unknown> {
   id: string;
@@ -25,11 +35,13 @@ interface PushResult {
   }>;
 }
 
+const UID = uniqueUserId();
+const DAY_MS = 86_400_000;
 let token: string;
 
 beforeAll(async () => {
   installFetchMock();
-  token = await login(4001, 'syncer');
+  token = await login(UID, 'syncer');
 });
 
 function push(mutations: unknown[]) {
@@ -45,6 +57,24 @@ function pull(cursor?: string, limit?: number) {
   if (cursor) params.set('cursor', cursor);
   if (limit) params.set('limit', String(limit));
   return apiJson<PullResult>(`/v1/sync/pull?${params}`, {token});
+}
+
+/** Pulls from `cursor` until caught up; returns every change and the cursor. */
+async function pullAll(
+  cursor: string | undefined,
+  limit: number,
+): Promise<{changes: PullResult['changes']; cursor: string}> {
+  const changes: PullResult['changes'] = [];
+  let next = cursor;
+  for (let page = 0; page < 50; page++) {
+    const res = await pull(next, limit);
+    expect(res.status).toBe(200);
+    changes.push(...res.body.changes);
+    next = res.body.cursor ?? undefined;
+    if (!res.body.hasMore) break;
+  }
+  if (!next) throw new Error('pull returned no cursor');
+  return {changes, cursor: next};
 }
 
 describe('sync', () => {
@@ -166,27 +196,70 @@ describe('sync', () => {
         data: {name: `t${i}`},
       })),
     );
-    const seen = new Set<string>();
-    let cursor: string | undefined;
-    for (let page = 0; page < 20; page++) {
-      const res = await pull(cursor, 5);
-      for (const change of res.body.changes) {
-        seen.add(change.entity.id);
-      }
-      cursor = res.body.cursor!;
-      if (!res.body.hasMore) break;
-    }
+    const {changes} = await pullAll(undefined, 5);
+    const seen = new Set(changes.map(change => change.entity.id));
     for (let i = 0; i < 12; i++) {
       expect(seen.has(`tag-${i}`)).toBe(true);
     }
   });
 
-  it('asks for a full resync when the cursor is older than tombstone retention', async () => {
-    const ancient = btoa(
-      JSON.stringify({version: 1, since: Date.now() - 40 * 86_400_000}),
-    ).replaceAll('=', '');
-    const res = await pull(ancient);
-    expect(res.body).toMatchObject({reset: true, cursor: null, changes: []});
+  it('pages through changes that share one stamp without skipping any', async () => {
+    const taskIds = Array.from({length: 7}, (_, i) => `cascade-${i}`);
+    await push([
+      {op: 'upsert', type: 'list', id: 'cascade', data: {name: '项目'}},
+      ...taskIds.map(id => ({
+        op: 'upsert',
+        type: 'task',
+        id,
+        data: {title: id, listId: 'cascade'},
+      })),
+    ]);
+    const {cursor} = await pullAll(undefined, 1000);
+
+    // Deleting the list trashes its tasks in the same write.
+    await push([{op: 'delete', type: 'list', id: 'cascade'}]);
+    const {changes} = await pullAll(cursor, 3);
+    expect(changes.map(change => change.entity.id).sort()).toEqual(
+      ['cascade', ...taskIds].sort(),
+    );
+    expect(changes.every(change => change.entity.deletedAt !== null)).toBe(
+      true,
+    );
+  });
+
+  it('asks for a full resync once deletions it missed are purged, then resumes', async () => {
+    await push([{op: 'upsert', type: 'task', id: 'gone', data: {title: '旧'}}]);
+    const before = await pullAll(undefined, 1000);
+    await push([{op: 'delete', type: 'task', id: 'gone'}]);
+
+    // The trash keeps deletions for 30 days; age this one past that.
+    await withTestDatabase(async db => {
+      await db
+        .update(entities)
+        .set({deletedAt: new Date(Date.now() - 31 * DAY_MS)})
+        .where(and(eq(entities.userId, UID), eq(entities.id, 'gone')));
+    });
+    await runCron(HOUSEKEEPING_CRON);
+
+    const stale = await pull(before.cursor);
+    expect(stale.body).toMatchObject({reset: true, cursor: null, changes: []});
+
+    const resync = await pullAll(undefined, 1000);
+    expect(resync.changes.map(change => change.entity.id)).not.toContain(
+      'gone',
+    );
+    const after = await pull(resync.cursor);
+    expect(after.body).toMatchObject({reset: false, changes: []});
+  });
+
+  it('rejects cursors it did not issue', async () => {
     expect((await pull('not-a-cursor')).status).toBe(400);
+    for (const body of [
+      {version: 1, since: Date.now()},
+      {v: 2, s: 9_000_000_000_000_000},
+    ]) {
+      const cursor = btoa(JSON.stringify(body)).replaceAll('=', '');
+      expect((await pull(cursor)).status).toBe(400);
+    }
   });
 });

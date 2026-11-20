@@ -1,12 +1,16 @@
-import {runDurableObjectAlarm} from 'cloudflare:test';
+import {eq} from 'drizzle-orm';
 import {beforeAll, describe, expect, it} from 'vitest';
+import {sessions} from '../../src/db/schema';
+import {HOUSEKEEPING_CRON, REMINDER_CRON} from '../../src/scheduled';
 import {
   apiJson,
-  hubStub,
   installFetchMock,
   login,
   pushCalls,
   pushStatus,
+  runCron,
+  uniqueUserId,
+  withTestDatabase,
 } from './helpers';
 
 interface Task extends Record<string, unknown> {
@@ -16,12 +20,11 @@ interface Task extends Record<string, unknown> {
   listId: string | null;
 }
 
-const UID = 5001;
 let token: string;
 
 beforeAll(async () => {
   installFetchMock();
-  token = await login(UID, 'featurer');
+  token = await login(uniqueUserId(), 'featurer');
 });
 
 function post<T>(path: string, body: unknown) {
@@ -117,7 +120,7 @@ describe('views', () => {
 });
 
 describe('web push reminders', () => {
-  it('fires due reminders through the Durable Object alarm and drops dead subscriptions', async () => {
+  it('the reminder cron sends due reminders and drops dead subscriptions', async () => {
     const keyPair = await crypto.subtle.generateKey(
       {name: 'ECDH', namedCurve: 'P-256'},
       true,
@@ -149,9 +152,9 @@ describe('web push reminders', () => {
     pushCalls.length = 0;
     await post('/v1/tasks', {
       title: '吃药',
-      reminders: [{at: new Date(Date.now() + 500).toISOString()}],
+      reminders: [{at: new Date(Date.now() - 1000).toISOString()}],
     });
-    expect(await runDurableObjectAlarm(hubStub(UID))).toBe(true);
+    await runCron(REMINDER_CRON);
     expect(pushCalls.map(c => c.url).sort()).toEqual([
       'https://push.test/alive',
       'https://push.test/dead',
@@ -161,19 +164,109 @@ describe('web push reminders', () => {
       /^vapid t=.+, k=.+/,
     );
 
+    // Sent reminders are gone, so the next run sends nothing.
     pushCalls.length = 0;
+    await runCron(REMINDER_CRON);
+    expect(pushCalls).toEqual([]);
+
     const testPush = await post<{sent: number}>('/v1/push/test', {});
     expect(testPush.body.sent).toBe(1);
     expect(pushCalls.map(c => c.url)).toEqual(['https://push.test/alive']);
   });
 });
 
+describe('concurrent writers', () => {
+  it('applies parallel edits of one task without losing any field', async () => {
+    const racer = await login(uniqueUserId(), 'racer');
+    const created = await apiJson<{id: string}>('/v1/tasks', {
+      token: racer,
+      method: 'POST',
+      body: JSON.stringify({title: '并发'}),
+    });
+    const edits: Array<Record<string, unknown>> = [
+      {notes: '备注'},
+      {priority: 2},
+      {quadrant: 1},
+      {dueDate: '2026-12-24'},
+      {energy: 'high'},
+      {estimateMinutes: 30},
+      {myDay: '2026-12-01'},
+      {sortOrder: 5},
+    ];
+    const responses = await Promise.all(
+      edits.map(edit =>
+        apiJson(`/v1/tasks/${created.body.id}`, {
+          token: racer,
+          method: 'PATCH',
+          body: JSON.stringify(edit),
+        }),
+      ),
+    );
+    expect(responses.map(response => response.status)).toEqual(
+      edits.map(() => 200),
+    );
+    const task = await apiJson<Record<string, unknown>>(
+      `/v1/tasks/${created.body.id}`,
+      {token: racer},
+    );
+    expect(task.body).toMatchObject(Object.assign({rev: 9}, ...edits));
+  });
+
+  it('keeps the live entity count exact under parallel creates', async () => {
+    const racer = await login(uniqueUserId(), 'counter');
+    const responses = await Promise.all(
+      Array.from({length: 20}, (_, i) =>
+        apiJson('/v1/tasks', {
+          token: racer,
+          method: 'POST',
+          body: JSON.stringify({title: `任务 ${i}`}),
+        }),
+      ),
+    );
+    expect(responses.every(response => response.status === 201)).toBe(true);
+    const usage = await apiJson<{totals: {entities: number}}>('/v1/usage', {
+      token: racer,
+    });
+    expect(usage.body.totals.entities).toBe(20);
+  });
+});
+
+describe('hourly housekeeping', () => {
+  it('purges expired sessions and keeps live ones', async () => {
+    const owner = await login(uniqueUserId(), 'sweeper');
+    const pat = await apiJson<{token: string; session: {id: string}}>(
+      '/v1/auth/tokens',
+      {
+        token: owner,
+        method: 'POST',
+        body: JSON.stringify({name: 'old script', expiresInDays: 1}),
+      },
+    );
+    await withTestDatabase(async db => {
+      await db
+        .update(sessions)
+        .set({expiresAt: new Date(Date.now() - 60_000)})
+        .where(eq(sessions.id, pat.body.session.id));
+    });
+    await runCron(HOUSEKEEPING_CRON);
+
+    // A purged session is unknown, not merely expired.
+    const purged = await apiJson<{error: {code: string}}>('/v1/me', {
+      token: pat.body.token,
+    });
+    expect(purged.body.error.code).toBe('invalid_token');
+    expect((await apiJson('/v1/me', {token: owner})).status).toBe(200);
+  });
+});
+
 describe('daily quota', () => {
   it('rejects writes past the per-user daily limit with 429 + Retry-After, and reports usage', async () => {
+    // A user of its own, so burning the whole budget affects no other test.
+    const owner = await login(uniqueUserId(), 'quota');
     const usage = await apiJson<{
       used: {writes: number};
       limits: {writes: number};
-    }>('/v1/usage', {token});
+    }>('/v1/usage', {token: owner});
     const remaining = usage.body.limits.writes - usage.body.used.writes;
     const mutations = (n: number, offset: number) =>
       Array.from({length: n}, (_, i) => ({
@@ -188,7 +281,7 @@ describe('daily quota', () => {
       const res = await apiJson<{results: Array<{status: string}>}>(
         '/v1/sync/push',
         {
-          token,
+          token: owner,
           method: 'POST',
           body: JSON.stringify({mutations: mutations(n, sent)}),
         },
@@ -199,7 +292,7 @@ describe('daily quota', () => {
     const over = await apiJson<{
       results: Array<{status: string; error: {code: string}}>;
     }>('/v1/sync/push', {
-      token,
+      token: owner,
       method: 'POST',
       body: JSON.stringify({mutations: mutations(1, 10_000)}),
     });
@@ -208,7 +301,7 @@ describe('daily quota', () => {
       error: {code: 'quota_exceeded'},
     });
     const rest = await apiJson<{error: {code: string}}>('/v1/tasks', {
-      token,
+      token: owner,
       method: 'POST',
       body: JSON.stringify({title: 'x'}),
     });
@@ -217,7 +310,7 @@ describe('daily quota', () => {
     const after = await apiJson<{
       used: {writes: number};
       limits: {writes: number};
-    }>('/v1/usage', {token});
+    }>('/v1/usage', {token: owner});
     expect(after.body.used.writes).toBe(after.body.limits.writes);
   });
 });

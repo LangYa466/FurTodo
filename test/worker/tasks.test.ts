@@ -1,6 +1,5 @@
-import {runDurableObjectAlarm} from 'cloudflare:test';
 import {beforeAll, describe, expect, it} from 'vitest';
-import {apiJson, hubStub, installFetchMock, login} from './helpers';
+import {apiJson, installFetchMock, login, uniqueUserId} from './helpers';
 
 interface Task extends Record<string, unknown> {
   id: string;
@@ -16,29 +15,11 @@ interface Subtask {
   completed: boolean;
 }
 
-const UID = 3001;
 let token: string;
-
-/**
- * Miniflare fires alarms scheduled for now on its own; run one extra and wait
- * for the background work to show up in reads.
- */
-async function settle<T>(
-  read: () => Promise<T>,
-  isDone: (value: T) => boolean,
-): Promise<T> {
-  await runDurableObjectAlarm(hubStub(UID));
-  for (let attempt = 0; attempt < 40; attempt++) {
-    const value = await read();
-    if (isDone(value)) return value;
-    await scheduler.wait(50);
-  }
-  return read();
-}
 
 beforeAll(async () => {
   installFetchMock();
-  token = await login(UID, 'tasker');
+  token = await login(uniqueUserId(), 'tasker');
 });
 
 function post<T>(path: string, body: unknown) {
@@ -130,7 +111,7 @@ describe('tasks', () => {
     expect(redo.body.spawned).toHaveLength(0);
   });
 
-  it('deleting a list moves its tasks to the trash in the background; restoring brings them back', async () => {
+  it('deleting a list moves its tasks to the trash; restoring the list brings back exactly those', async () => {
     const list = await post<Task>('/v1/lists', {name: '工作'});
     const t1 = await post<Task>('/v1/tasks', {
       title: '写周报',
@@ -140,31 +121,38 @@ describe('tasks', () => {
       title: '整理信箱',
       listId: list.body.id,
     });
+    // Trashed on its own before the list, so restoring the list skips it.
+    const t3 = await post<Task>('/v1/tasks', {
+      title: '旧草稿',
+      listId: list.body.id,
+    });
+    await apiJson(`/v1/tasks/${t3.body.id}`, {token, method: 'DELETE'});
 
     const deleted = await apiJson<Task>(`/v1/lists/${list.body.id}`, {
       token,
       method: 'DELETE',
     });
     expect(deleted.body.deletedAt).not.toBeNull();
-    const trash = await settle(
-      () =>
-        apiJson<{items: Array<{type: string; entity: Task}>}>('/v1/trash', {
-          token,
-        }),
-      res => res.body.items.some(i => i.entity.id === t2.body.id),
+    const trash = await apiJson<{items: Array<{type: string; entity: Task}>}>(
+      '/v1/trash',
+      {token},
     );
     const trashed = trash.body.items.map(i => i.entity.id);
     expect(trashed).toEqual(
-      expect.arrayContaining([list.body.id, t1.body.id, t2.body.id]),
+      expect.arrayContaining([
+        list.body.id,
+        t1.body.id,
+        t2.body.id,
+        t3.body.id,
+      ]),
     );
     const open = await apiJson<{items: Task[]}>('/v1/tasks', {token});
     expect(open.body.items.map(t => t.id)).not.toContain(t1.body.id);
 
     await post(`/v1/lists/${list.body.id}/restore`, {});
-    const restored = await settle(
-      () =>
-        apiJson<{items: Task[]}>(`/v1/tasks?listId=${list.body.id}`, {token}),
-      res => res.body.items.length === 2,
+    const restored = await apiJson<{items: Task[]}>(
+      `/v1/tasks?listId=${list.body.id}`,
+      {token},
     );
     expect(restored.body.items.map(t => t.id).sort()).toEqual(
       [t1.body.id, t2.body.id].sort(),
