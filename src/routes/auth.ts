@@ -58,6 +58,7 @@ const githubUserSchema = z
     createdAt: z.string().openapi({description: 'GitHub 账号创建时间'}),
   })
   .openapi('GithubUser');
+/** A login session: an OAuth login or a personal access token. */
 export const sessionSchema = z
   .object({
     id: z.string(),
@@ -74,6 +75,7 @@ export const sessionSchema = z
     current: z.boolean(),
   })
   .openapi('Session');
+/** The caller's GitHub user, eligibility, session, and settings. */
 export const accountSchema = z
   .object({
     user: githubUserSchema,
@@ -121,6 +123,7 @@ async function enforceLoginRateLimit(c: AppContext): Promise<void> {
   }
 }
 
+/** Registers the GitHub OAuth, token, logout, and session routes. */
 export function registerAuthRoutes(app: OpenAPIHono<AppEnv>): void {
   app.openapi(
     createRoute({

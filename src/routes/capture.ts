@@ -100,6 +100,7 @@ function namesOf(entities: StoredEntity[]): Array<{id: string; name: string}> {
   );
 }
 
+/** Registers the one-line capture preview and create route. */
 export function registerCaptureRoutes(app: OpenAPIHono<AppEnv>): void {
   app.openapi(
     createRoute({

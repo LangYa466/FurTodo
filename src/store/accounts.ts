@@ -49,6 +49,7 @@ const ELIGIBILITY_GRACE_MS = 72 * HOUR_MS;
 const MAX_SESSIONS = 50;
 const SESSION_ID_BYTES = 16;
 
+/** One session as listed to the user; never carries the token itself. */
 export interface SessionView {
   id: string;
   kind: SessionKind;
@@ -61,6 +62,7 @@ export interface SessionView {
   current: boolean;
 }
 
+/** The GitHub account-age gate as shown to the user. */
 export interface EligibilityView {
   /** Minimum account age in days the API requires. */
   minAccountAgeDays: number;
@@ -70,6 +72,7 @@ export interface EligibilityView {
   checkedAt: string;
 }
 
+/** Everything the account screen shows for the signed-in user. */
 export interface AccountView {
   user: GithubProfile;
   eligibility: EligibilityView;
@@ -86,6 +89,7 @@ export interface AuthInfo {
   usage: QuotaCounts;
 }
 
+/** A login collected by the authorize step, awaiting PKCE redemption. */
 export interface PendingSessionInput {
   userId: number;
   profile: GithubProfile;
@@ -95,6 +99,7 @@ export interface PendingSessionInput {
   userAgent: string | null;
 }
 
+/** The PKCE redemption of a pending login, including its verifier. */
 export interface ActivationInput {
   userId: number;
   sessionId: string;
@@ -422,6 +427,7 @@ export async function authorize(
   };
 }
 
+/** Returns the account screen of the session behind the request. */
 export async function accountView(
   db: Executor,
   config: AppConfig,
@@ -464,6 +470,7 @@ export async function accountView(
   };
 }
 
+/** Creates a personal access token session and returns its view. */
 export async function createPersonalToken(
   db: Database,
   userId: number,
@@ -493,6 +500,7 @@ export async function createPersonalToken(
   return toSessionView(token, currentSessionId);
 }
 
+/** Returns the user's active sessions and tokens, most recently used first. */
 export async function listSessions(
   db: Executor,
   userId: number,

@@ -5,10 +5,12 @@ import {usageDays, users, type UsageDayRow} from '../db/schema';
 import {AppError} from '../lib/errors';
 import {localDate, nextMidnightInstant} from '../lib/time';
 
+/** Live entity count, reported against its limit. */
 export interface EntityTotals {
   entities: number;
 }
 
+/** Today's usage, its limits, and when the counters reset. */
 export interface UsageView {
   day: string;
   timeZone: string;
@@ -43,6 +45,7 @@ export function countsOf(row: UsageDayRow | null | undefined): QuotaCounts {
   };
 }
 
+/** Builds the 429 for an exhausted quota, with seconds until it resets. */
 export function quotaExceeded(
   config: AppConfig,
   kind: QuotaKind,
@@ -89,7 +92,10 @@ async function addToCounter(
   return row?.used ?? null;
 }
 
-/** Charges `amount` against today's limit; throws `quota_exceeded` if it does not fit. */
+/**
+ * Charges `amount` against today's limit; throws `quota_exceeded` if it
+ * does not fit.
+ */
 export async function consumeQuota(
   db: Executor,
   config: AppConfig,
@@ -135,6 +141,7 @@ export async function recordUsage(
   await addToCounter(db, config, userId, kind, amount, now, null);
 }
 
+/** Returns today's usage and the entity totals shown to the user. */
 export async function usageView(
   db: Executor,
   config: AppConfig,

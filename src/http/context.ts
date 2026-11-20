@@ -18,6 +18,7 @@ import {
 } from '../store/mutations';
 import {quotaExceeded, recordUsage} from '../store/quota';
 
+/** Per-request values the handlers read back out of the context. */
 export interface AppVariables {
   requestId: string;
   database: DatabaseConnection;
@@ -27,11 +28,13 @@ export interface AppVariables {
   auth: AuthInfo;
 }
 
+/** The Hono environment: Worker bindings and per-request variables. */
 export interface AppEnv {
   Bindings: Env;
   Variables: AppVariables;
 }
 
+/** The request context of a route under this environment. */
 export type AppContext = Context<AppEnv>;
 
 /** `/v1` paths that skip Bearer auth. */
@@ -88,6 +91,7 @@ export const authenticate: MiddlewareHandler<AppEnv> = async (c, next) => {
   return next();
 };
 
+/** Returns the request's database, opening the connection on first use. */
 export function database(c: AppContext): Promise<Database> {
   return c.get('database').get();
 }
@@ -121,11 +125,13 @@ export async function readEntities(
   return loaded;
 }
 
+/** One field that failed validation, addressed by its dotted path. */
 export interface ValidationIssue {
   path: string;
   message: string;
 }
 
+/** Whether a patch validated, and either the patch or why it did not. */
 export type PatchValidation =
   | {ok: true; patch: Record<string, unknown>}
   | {ok: false; message: string; issues: ValidationIssue[]};
@@ -193,6 +199,7 @@ export function validatePatch(kind: Kind, data: unknown): PatchValidation {
     : invalidPatch(kind, result.error.issues);
 }
 
+/** Validates and normalizes a patch, throwing `validation_error` on failure. */
 export function parsePatchOrThrow(
   kind: Kind,
   data: unknown,

@@ -1,13 +1,16 @@
 import type {z} from '@hono/zod-openapi';
 import {errorSchema} from '../domain/schemas';
 
+/** OpenAPI security requirement for the Bearer token routes. */
 export const BEARER_SECURITY = [{bearerAuth: []}];
 
+/** An OpenAPI JSON response: a schema plus its description. */
 export interface JsonResponseConfig<T extends z.ZodType> {
   content: {'application/json': {schema: T}};
   description: string;
 }
 
+/** Builds an OpenAPI JSON response carrying `schema` and `description`. */
 export function jsonContent<T extends z.ZodType>(
   schema: T,
   description: string,
@@ -25,6 +28,7 @@ const ERROR_DESCRIPTIONS = {
   429: '超过每日配额或限流（quota_exceeded / rate_limited），见 Retry-After',
 } as const;
 
+/** HTTP statuses the API reports errors with. */
 export type ErrorStatus = keyof typeof ERROR_DESCRIPTIONS;
 
 /** Returns OpenAPI error responses for the given status codes. */

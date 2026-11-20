@@ -20,12 +20,14 @@ const REMINDERS_PER_ROUND = 100;
 /** Caps one cron run; later rounds pick up the rest a minute later. */
 const MAX_REMINDER_ROUNDS = 10;
 
+/** A browser subscription to register, with its keys. */
 export interface PushSubscriptionInput {
   endpoint: string;
   keys: {p256dh: string; auth: string};
   device: string | null;
 }
 
+/** How one push send to one subscription went. */
 export interface PushDelivery {
   /** Origin of the push service endpoint. */
   endpoint: string;
@@ -33,6 +35,7 @@ export interface PushDelivery {
   ok: boolean;
 }
 
+/** Result of a test push: how many subscriptions, and each outcome. */
 export interface TestPushResult {
   sent: number;
   results: PushDelivery[];
@@ -44,6 +47,7 @@ interface DeliveryReport {
   gone: Set<string>;
 }
 
+/** Registers or refreshes a browser's push subscription. */
 export async function addPushSubscription(
   db: Database,
   userId: number,
@@ -88,6 +92,7 @@ export async function addPushSubscription(
   });
 }
 
+/** Deletes a push subscription; reports whether one was removed. */
 export async function removePushSubscription(
   db: Executor,
   userId: number,
@@ -179,6 +184,7 @@ async function deliver(
   };
 }
 
+/** Sends a test notification to every subscription of one user. */
 export async function sendTestPush(
   db: Executor,
   env: Env,

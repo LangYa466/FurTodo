@@ -1,5 +1,6 @@
 import type {ContentfulStatusCode} from 'hono/utils/http-status';
 
+/** Stable machine-readable failure codes that clients may branch on. */
 export type ErrorCode =
   | 'bad_request'
   | 'validation_error'
@@ -17,7 +18,9 @@ export type ErrorCode =
   | 'storage_unavailable'
   | 'internal_error';
 
-/** An error that the HTTP layer renders as `{error: {code, message, details}}`. */
+/**
+ * An error the HTTP layer renders as `{error: {code, message, details}}`.
+ */
 export class AppError extends Error {
   constructor(
     readonly status: ContentfulStatusCode,

@@ -11,6 +11,7 @@ import {
   zonedToInstant,
 } from './time';
 
+/** The "now", zone and week-start inputs that anchor every relative phrase. */
 export interface CaptureContext {
   /** Epoch milliseconds of "now". */
   now: number;
@@ -20,6 +21,7 @@ export interface CaptureContext {
   weekStart: 0 | 1;
 }
 
+/** Everything the tokenizer can recognize and strip from the input text. */
 export type CaptureTokenKind =
   | 'date'
   | 'time'
@@ -31,6 +33,7 @@ export type CaptureTokenKind =
   | 'energy'
   | 'recurrence';
 
+/** One recognized fragment, kept so clients can highlight what was consumed. */
 export interface CaptureToken {
   kind: CaptureTokenKind;
   /** Exact substring of the input. */
@@ -40,6 +43,10 @@ export interface CaptureToken {
   end: number;
 }
 
+/**
+ * Task fields parsed out of free-form text; `warnings` lists fragments that
+ * looked meaningful but could not be applied.
+ */
 export interface ParsedCapture {
   title: string;
   dueDate: string | null;
@@ -339,6 +346,7 @@ function parseRecurrenceRule(rest: string): RecurrenceMatch | null {
     `^(?:完成後|完成后)(?:每)?${NUM_SRC}(天|週|周|個月|个月|月|年)`,
   ).exec(rest);
   if (match) {
+    // A successful exec() always fills the groups used below.
     const interval = parseNumeric(match[1]!);
     if (interval !== null && interval >= 1) {
       return {
@@ -745,6 +753,7 @@ export function parseCapture(text: string, ctx: CaptureContext): ParsedCapture {
   for (const match of masked.matchAll(
     new RegExp(`${NUM_SRC}天(?:後|后)`, 'g'),
   )) {
+    // Every matchAll() step is a match, so its capture groups are present.
     const days = parseNumeric(match[1]!);
     if (days !== null && days >= 1) {
       addDate(match.index, match.index + match[0].length, addDays(today, days));

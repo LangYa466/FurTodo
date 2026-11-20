@@ -53,6 +53,7 @@ export function entityRow(
   };
 }
 
+/** Returns the domain entity a stored row carries. */
 export function storedEntity(row: EntityRow): StoredEntity {
   return {
     kind: row.kind,
@@ -67,6 +68,7 @@ export function storedEntity(row: EntityRow): StoredEntity {
   };
 }
 
+/** Returns one entity of `kind`, or null when the user has no such entity. */
 export async function findEntity(
   db: Executor,
   userId: number,
@@ -105,6 +107,7 @@ export async function findLiveEntities(
   return rows.map(storedEntity);
 }
 
+/** Returns every task of the user matching `conditions`. */
 export async function findTasks(
   db: Executor,
   userId: number,
@@ -136,6 +139,7 @@ export async function findTrash(
   return rows.map(storedEntity);
 }
 
+/** Returns the conditions that select tasks neither deleted nor completed. */
 export function openTasks(): Conditions {
   return [isNull(entities.deletedAt), isNull(entities.completedAt)];
 }
@@ -165,7 +169,10 @@ export function todayCandidates(date: string, timeZone: string): Conditions {
   ];
 }
 
-/** Open tasks due before `until`, which covers the upcoming view and overdue. */
+/**
+ * Open tasks due before `until`, which covers the upcoming view and
+ * overdue.
+ */
 export function dueBefore(until: string): Conditions {
   return [...openTasks(), lt(entities.dueDate, until)];
 }
@@ -210,6 +217,7 @@ export interface SyncCursor {
   last: {kind: Kind; id: string} | null;
 }
 
+/** One page of a sync pull: changes, the next cursor, and expiry. */
 export interface PullPage {
   changes: StoredEntity[];
   hasMore: boolean;

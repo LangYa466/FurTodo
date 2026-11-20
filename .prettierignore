@@ -1,0 +1,6 @@
+# Generated: drizzle-kit migrations and `wrangler types` output.
+drizzle/
+worker-configuration.d.ts
+
+node_modules/
+.wrangler/

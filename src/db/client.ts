@@ -15,6 +15,7 @@ import {
   users,
 } from './schema';
 
+/** A Drizzle handle for running queries against one connection. */
 export type Database = NodePgDatabase;
 /** The database or an open transaction on it. */
 export type Executor = PgAsyncDatabase<NodePgQueryResultHKT>;
@@ -157,7 +158,10 @@ export class DatabaseConnection {
   }
 }
 
-/** Runs `work` in a transaction, retrying deadlocks and serialization failures. */
+/**
+ * Runs `work` in a transaction, retrying deadlocks and serialization
+ * failures.
+ */
 export async function inTransaction<T>(
   db: Database,
   work: (tx: Executor) => Promise<T>,

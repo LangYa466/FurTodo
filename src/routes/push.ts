@@ -10,6 +10,7 @@ import {
 
 const MAX_ENDPOINT_LENGTH = 1024;
 
+/** Registers the VAPID key, subscription, and test push routes. */
 export function registerPushRoutes(app: OpenAPIHono<AppEnv>): void {
   app.openapi(
     createRoute({

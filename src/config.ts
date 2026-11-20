@@ -1,8 +1,11 @@
 import {isValidTimeZone} from './lib/time';
 
+/** Quota buckets a user spends from each day. */
 export type QuotaKind = 'requests' | 'reads' | 'writes' | 'logins' | 'pushes';
+/** Daily usage or limit, per quota bucket. */
 export type QuotaCounts = Record<QuotaKind, number>;
 
+/** Everything the Worker needs to know about its deployment. */
 export interface AppConfig {
   publicBaseUrl: string;
   minAccountAgeDays: number;
@@ -29,7 +32,9 @@ function trimTrailingSlashes(url: string): string {
   return url.replace(/\/+$/, '');
 }
 
-/** Validates the Worker vars eagerly; a bad value fails instead of defaulting. */
+/**
+ * Validates the Worker vars eagerly; a bad value fails instead of defaulting.
+ */
 function readConfig(env: Env): AppConfig {
   if (!isValidTimeZone(env.QUOTA_TIMEZONE)) {
     throw new Error(

@@ -5,13 +5,17 @@ import {Client} from 'pg';
 import {vi} from 'vitest';
 import worker from '../../src/index';
 
+/** Origin the Worker is called through in tests. */
 export const BASE = 'https://todo.example.com';
+/** Redirect URI the mock GitHub OAuth flow returns to. */
 export const CLIENT_REDIRECT = 'http://localhost:5173/auth/callback';
 
 /** Days since the mocked GitHub account was created. */
 export type AccountAgeMock = number;
 
+/** Account age that clears the minimum-age requirement. */
 export const OLD_ENOUGH_DAYS = 1000;
+/** Account age that trips the minimum-age requirement. */
 export const TOO_NEW_DAYS = 30;
 
 const MS_PER_DAY = 86_400_000;
@@ -124,6 +128,7 @@ export function api(
   );
 }
 
+/** Calls the Worker and decodes the JSON response body. */
 export async function apiJson<T = Record<string, unknown>>(
   path: string,
   init: RequestInit & {token?: string} = {},
@@ -146,6 +151,7 @@ function base64UrlEncode(bytes: ArrayBuffer | Uint8Array): string {
     .replace(/=+$/, '');
 }
 
+/** Returns a PKCE verifier and its S256 challenge. */
 export async function pkcePair(): Promise<{
   verifier: string;
   challenge: string;
@@ -237,6 +243,7 @@ export function revokeGithubTokens(userId: number): void {
   }
 }
 
+/** Makes the mocked GitHub API answer 503 while `down` is true. */
 export function setGithubDown(down: boolean): void {
   githubDown = down;
 }

@@ -78,6 +78,7 @@ function toApiTasks(tasks: StoredEntity[], timeZone: string): ApiEntity[] {
   return tasks.map(task => toApiEntity(task, timeZone));
 }
 
+/** Registers the today, upcoming, and four-quadrant views. */
 export function registerViewRoutes(app: OpenAPIHono<AppEnv>): void {
   app.openapi(
     createRoute({

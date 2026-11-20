@@ -1,5 +1,6 @@
 import type {AppConfig} from '../config';
 
+/** Public profile fields the app keeps for a GitHub account. */
 export interface GithubProfile {
   id: number;
   login: string;
@@ -9,6 +10,7 @@ export interface GithubProfile {
   createdAt: string;
 }
 
+/** Outcome of trading the OAuth `code` for an access token. */
 export type CodeExchangeResult =
   {ok: true; accessToken: string} | {ok: false; error: string};
 
@@ -47,6 +49,10 @@ function apiHeaders(token: string): HeadersInit {
   };
 }
 
+/**
+ * Trades the OAuth authorization `code` plus PKCE verifier for a GitHub access
+ * token, which expires according to GitHub's policy.
+ */
 export async function exchangeCode(
   config: AppConfig,
   clientId: string,

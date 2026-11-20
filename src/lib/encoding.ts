@@ -1,9 +1,12 @@
+/** Stateless UTF-8 encoder reused by the crypto and push helpers. */
 export const utf8Encoder = new TextEncoder();
+/** Decodes UTF-8 bytes produced by the matching encoder. */
 export const utf8Decoder = new TextDecoder();
 
 /** Keeps `String.fromCharCode(...chunk)` under engine argument limits. */
 const CHAR_CODE_CHUNK = 0x8000;
 
+/** Encodes bytes as unpadded base64url, safe in URLs and JWT segments. */
 export function base64UrlEncode(input: Uint8Array | ArrayBuffer): string {
   const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
   let binary = '';
@@ -35,6 +38,7 @@ export function base64UrlDecode(input: string): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
+/** Concatenates byte arrays into one new array of their total length. */
 export function concatBytes(...parts: Uint8Array[]): Uint8Array<ArrayBuffer> {
   const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
   const joined = new Uint8Array(totalLength);

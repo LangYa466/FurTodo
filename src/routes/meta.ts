@@ -7,6 +7,7 @@ import {devLoginPage} from './dev-login';
 
 const NONCE_BYTES = 16;
 
+/** Registers the index, health, integration guide, and dev login routes. */
 export function registerMetaRoutes(app: OpenAPIHono<AppEnv>): void {
   app.get('/', c => {
     const {publicBaseUrl, minAccountAgeDays} = configFor(c.env);

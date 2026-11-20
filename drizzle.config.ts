@@ -5,6 +5,7 @@ import {defineConfig} from 'drizzle-kit';
 
 const url = process.env.DATABASE_URL;
 
+/** Reads the target database from `DATABASE_URL` when one is set. */
 export default defineConfig({
   dialect: 'postgresql',
   schema: './src/db/schema.ts',

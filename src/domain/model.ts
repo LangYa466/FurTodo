@@ -1,8 +1,11 @@
 import type {Recurrence} from '../lib/recurrence';
 import {zonedToInstant} from '../lib/time';
 
+/** The entity kinds the API stores and syncs. */
 export const KINDS = ['task', 'list', 'folder', 'tag', 'settings'] as const;
+/** One of the stored entity kinds. */
 export type Kind = (typeof KINDS)[number];
+/** First day of the week: 0 = Sunday, 1 = Monday. */
 export type WeekStart = 0 | 1;
 
 /** A synced entity: one row of the `entities` table. */
@@ -19,11 +22,15 @@ export interface StoredEntity {
    */
   updatedAt: number;
   deletedAt: number | null;
-  /** "list:<id>" when a list deletion cascaded here; restoring it undoes this. */
+  /**
+   * "list:<id>" when a list deletion cascaded here; restoring it undoes
+   * this.
+   */
   deletedVia: string | null;
   rev: number;
 }
 
+/** Stored fields of a settings entity; unsaved settings use the defaults. */
 export interface Settings {
   timezone: string;
   weekStart: WeekStart;
@@ -32,25 +39,31 @@ export interface Settings {
   locale: string;
 }
 
+/** A task reminder: an id and the instant it fires. */
 export interface ReminderData {
   id: string;
   /** ISO 8601 instant. */
   at: string;
 }
 
+/** A checklist item of a task. */
 export interface SubtaskData {
   id: string;
   title: string;
   completed: boolean;
 }
 
+/** A related link of a task; `title` is optional. */
 export interface LinkData {
   id: string;
   url: string;
   title: string | null;
 }
 
-/** Stored task fields: zod validates client input and the server sets the rest. */
+/**
+ * Stored task fields: zod validates client input and the server sets the
+ * rest.
+ */
 export interface TaskData {
   title: string;
   notes: string;
@@ -73,10 +86,12 @@ export interface TaskData {
   completedAt: string | null;
 }
 
+/** The settings entity id; there is one settings row per user. */
 export const SETTINGS_ID = 'main';
 /** Deleted entities stay in the trash this long before they are purged. */
 export const TOMBSTONE_RETENTION_MS = 30 * 86_400_000;
 
+/** Settings of a user who never saved any. */
 export const DEFAULT_SETTINGS: Settings = {
   timezone: 'Asia/Shanghai',
   weekStart: 1,
@@ -85,6 +100,7 @@ export const DEFAULT_SETTINGS: Settings = {
   locale: 'zh-CN',
 };
 
+/** Fields a create request must carry for each kind. */
 export const REQUIRED_ON_CREATE: Record<Kind, readonly string[]> = {
   task: ['title'],
   list: ['name'],
@@ -131,6 +147,7 @@ const DEFAULT_FIELDS: Record<
   settings: () => ({...DEFAULT_SETTINGS}),
 };
 
+/** Returns whether `value` names a stored entity kind. */
 export function isKind(value: string): value is Kind {
   return (KINDS as readonly string[]).includes(value);
 }
@@ -170,6 +187,7 @@ export function newEntity(
   };
 }
 
+/** A merged entity and the fields the patch actually changed. */
 export interface MergeResult {
   next: StoredEntity;
   changedFields: string[];
@@ -210,6 +228,7 @@ export interface ApiEntity {
   deletedAt: string | null;
 }
 
+/** Returns `entity` in the JSON shape the HTTP API serves. */
 export function toApiEntity(entity: StoredEntity, timeZone: string): ApiEntity {
   const fields: Record<string, unknown> = {
     id: entity.id,
@@ -232,6 +251,7 @@ export function toApiEntity(entity: StoredEntity, timeZone: string): ApiEntity {
   return fields as ApiEntity;
 }
 
+/** Returns the settings of `entity`, or the defaults when it is missing. */
 export function settingsFrom(entity: StoredEntity | null): Settings {
   if (!entity) return {...DEFAULT_SETTINGS};
   // Settings data is written only through the zod-validated settings patch.

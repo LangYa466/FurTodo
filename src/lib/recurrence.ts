@@ -8,8 +8,13 @@ import {
   weekdayOf,
 } from './time';
 
+/** Schedule granularity; month and year steps are calendar-based. */
 export type Freq = 'daily' | 'weekly' | 'monthly' | 'yearly';
 
+/**
+ * A repeat rule as stored on a task. Fields not used by `freq` are ignored,
+ * and `normalizeRecurrence` fills the optional ones from an anchor date.
+ */
 export interface Recurrence {
   freq: Freq;
   /** >= 1 */
@@ -189,6 +194,7 @@ export function firstOccurrenceOnOrAfter(
   }
 }
 
+/** Everything `nextOccurrence` needs to pick the date of the next instance. */
 export interface NextOccurrenceInput {
   rule: Recurrence;
   /**
@@ -203,6 +209,7 @@ export interface NextOccurrenceInput {
   weekStart: 0 | 1;
 }
 
+/** Due date and remaining count of the instance spawned after completion. */
 export interface NextOccurrence {
   dueDate: string;
   /**

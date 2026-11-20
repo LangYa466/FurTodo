@@ -37,6 +37,7 @@ const usageSchema = z
   })
   .openapi('Usage');
 
+/** Registers the profile, usage, and settings routes. */
 export function registerMeRoutes(app: OpenAPIHono<AppEnv>): void {
   app.openapi(
     createRoute({

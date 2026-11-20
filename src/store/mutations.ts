@@ -40,8 +40,10 @@ import {
 import {entityRow, storedEntity} from './entities';
 import {quotaDay, quotaExceeded, recordUsage} from './quota';
 
+/** Operation a mutation asks for on one entity. */
 export type MutationOp = 'upsert' | 'delete' | 'restore';
 
+/** One mutation after validation, ready to apply in a batch. */
 export interface ValidatedMutation {
   op: MutationOp;
   type: Kind;
@@ -54,6 +56,7 @@ export interface ValidatedMutation {
   mustExist?: boolean;
 }
 
+/** Why a mutation was rejected, in the shape the API reports. */
 export interface MutationError {
   code: ErrorCode;
   message: string;
@@ -61,6 +64,7 @@ export interface MutationError {
   retryAfter?: number;
 }
 
+/** What applying one mutation did, with the entity's latest state. */
 export interface MutationOutcome {
   index: number;
   type: Kind;

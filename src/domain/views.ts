@@ -6,6 +6,7 @@ import {taskDataOf, type Settings, type StoredEntity} from './model';
 
 /** Tasks due this many days ahead are suggested for My Day. */
 export const SUGGESTION_LOOKAHEAD_DAYS = 3;
+/** Priority value that marks a task as high priority. */
 export const HIGH_PRIORITY = 3;
 /** Quadrants 1 (urgent and important) and 2 (important). */
 export const IMPORTANT_QUADRANTS = [1, 2];
@@ -98,12 +99,14 @@ function byFocusScore(date: string): TaskComparator {
     taskDataOf(a).sortOrder - taskDataOf(b).sortOrder;
 }
 
+/** Counts and planned minutes summarised for the today view. */
 export interface TodayStats {
   open: number;
   completed: number;
   plannedMinutes: number;
 }
 
+/** The today view of one date: its buckets, focus list, and stats. */
 export interface TodayResult {
   date: string;
   myDay: StoredEntity[];
@@ -115,6 +118,7 @@ export interface TodayResult {
   stats: TodayStats;
 }
 
+/** Splits `tasks` into the buckets the today view shows for `date`. */
 export function buildToday(
   tasks: StoredEntity[],
   date: string,
@@ -191,11 +195,13 @@ export function buildToday(
   };
 }
 
+/** The open tasks due on one date of the upcoming view. */
 export interface DateGroup {
   date: string;
   tasks: StoredEntity[];
 }
 
+/** The upcoming view: overdue tasks plus one group per day. */
 export interface UpcomingResult {
   from: string;
   days: number;
@@ -203,6 +209,7 @@ export interface UpcomingResult {
   dates: DateGroup[];
 }
 
+/** Groups open tasks by due date over the `days` starting at `from`. */
 export function buildUpcoming(
   tasks: StoredEntity[],
   from: string,
@@ -240,6 +247,7 @@ export function buildUpcoming(
   };
 }
 
+/** Open tasks bucketed by Eisenhower quadrant, plus unclassified ones. */
 export interface MatrixResult {
   q1: StoredEntity[];
   q2: StoredEntity[];
@@ -248,6 +256,7 @@ export interface MatrixResult {
   unclassified: StoredEntity[];
 }
 
+/** Buckets open tasks into the matrix view, each by focus score. */
 export function buildMatrix(
   tasks: StoredEntity[],
   today: string,
@@ -269,6 +278,7 @@ export function buildMatrix(
   };
 }
 
+/** Filters a task search may apply, column-backed or in memory. */
 export interface TaskQuery {
   status: 'open' | 'completed' | 'all';
   listId?: string;

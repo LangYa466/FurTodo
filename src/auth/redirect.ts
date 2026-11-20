@@ -22,6 +22,10 @@ function matchesPattern(url: URL, pattern: string): boolean {
   return path === undefined || globToRegExp(path, '.*').test(url.pathname);
 }
 
+/**
+ * Reports whether `uri` is absolute, free of userinfo and fragment, and
+ * matched by one of the glob `patterns`.
+ */
 export function isAllowedRedirect(
   uri: string,
   patterns: readonly string[],

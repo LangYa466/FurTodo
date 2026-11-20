@@ -99,6 +99,7 @@ interface PendingMutation {
   mutation: ValidatedMutation;
 }
 
+/** Registers the batch push and incremental pull routes. */
 export function registerSyncRoutes(app: OpenAPIHono<AppEnv>): void {
   app.openapi(
     createRoute({

@@ -3,6 +3,7 @@ import {ID_PATTERN} from '../lib/ids';
 import {isValidDate, isValidTimeZone} from '../lib/time';
 import {KINDS, type ApiEntity} from './model';
 
+/** Client-generated entity id: 1-64 URL-safe characters. */
 export const idSchema = z
   .string()
   .regex(ID_PATTERN, 'id 只能包含 A-Z a-z 0-9 _ -，长度 1-64')
@@ -10,15 +11,18 @@ export const idSchema = z
     description: '实体 id。建议由客户端生成 UUIDv7（离线也能创建）',
     example: '019a9e8c-6f3b-7c2e-9b1a-3f2d4c5b6a71',
   });
+/** Calendar date without a time zone, "YYYY-MM-DD". */
 export const dateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/)
   .refine(isValidDate, '不是有效日期')
   .openapi({description: '日历日期（不含时区）', example: '2026-11-20'});
+/** Time of day on a 24-hour clock, "HH:mm". */
 export const timeSchema = z
   .string()
   .regex(/^([01]\d|2[0-3]):[0-5]\d$/, '时间格式需为 HH:mm')
   .openapi({description: '24 小时制时间', example: '15:00'});
+/** Absolute instant with its offset; responses always emit UTC. */
 export const isoDateTimeSchema = z.iso.datetime({offset: true}).openapi({
   description: 'ISO 8601 时刻（响应一律为 UTC Z 格式）',
   example: '2026-11-20T07:00:00.000Z',
@@ -27,8 +31,10 @@ const colorSchema = z
   .string()
   .regex(/^#[0-9a-fA-F]{6}$/, '颜色需为 #RRGGBB')
   .openapi({example: '#4F46E5'});
+/** Which entity kind a request or response body carries. */
 export const kindSchema = z.enum(KINDS).openapi({description: '实体种类'});
 
+/** A repeat rule: frequency, interval, and the restrictions it applies. */
 export const recurrenceSchema = z
   .strictObject({
     freq: z.enum(['daily', 'weekly', 'monthly', 'yearly']),
@@ -79,6 +85,7 @@ export const recurrenceSchema = z
   })
   .openapi('Recurrence');
 
+/** Checklist item as accepted on input; the id may be omitted. */
 export const subtaskInputSchema = z
   .strictObject({
     id: idSchema.optional().openapi({description: '省略时由服务器生成'}),
@@ -87,6 +94,7 @@ export const subtaskInputSchema = z
   })
   .openapi('SubtaskInput');
 
+/** Related link accepted on input; only http(s), mailto, and tel. */
 export const linkInputSchema = z
   .strictObject({
     id: idSchema.optional(),
@@ -101,6 +109,7 @@ export const linkInputSchema = z
   })
   .openapi('LinkInput');
 
+/** Reminder as accepted on input, firing at an absolute instant. */
 export const reminderInputSchema = z
   .strictObject({
     id: idSchema.optional(),
@@ -168,11 +177,14 @@ const taskFields = {
   }),
 };
 
+/** Partial task update; every field is optional. */
 export const taskPatchSchema = z
   .strictObject(taskFields)
   .partial()
   .openapi('TaskPatch');
+/** Fields of a partial task update, after parsing. */
 export type TaskPatch = z.infer<typeof taskPatchSchema>;
+/** New task; only the title is required. */
 export const taskCreateSchema = z
   .strictObject({...taskFields, id: idSchema})
   .partial()
@@ -191,10 +203,12 @@ const listFields = {
   sortOrder: z.number(),
   archived: z.boolean(),
 };
+/** Partial task list update. */
 export const listPatchSchema = z
   .strictObject(listFields)
   .partial()
   .openapi('ListPatch');
+/** New task list; only the name is required. */
 export const listCreateSchema = z
   .strictObject({...listFields, id: idSchema})
   .partial()
@@ -205,10 +219,12 @@ const folderFields = {
   name: z.string().trim().min(1).max(100),
   sortOrder: z.number(),
 };
+/** Partial folder update. */
 export const folderPatchSchema = z
   .strictObject(folderFields)
   .partial()
   .openapi('FolderPatch');
+/** New folder; only the name is required. */
 export const folderCreateSchema = z
   .strictObject({...folderFields, id: idSchema})
   .partial()
@@ -225,16 +241,19 @@ const tagFields = {
     .openapi({example: '电脑前'}),
   color: colorSchema.nullable(),
 };
+/** Partial tag update. */
 export const tagPatchSchema = z
   .strictObject(tagFields)
   .partial()
   .openapi('TagPatch');
+/** New tag; only the name is required. */
 export const tagCreateSchema = z
   .strictObject({...tagFields, id: idSchema})
   .partial()
   .required({name: true})
   .openapi('TagCreate');
 
+/** Partial settings update; every field is optional. */
 export const settingsPatchSchema = z
   .strictObject({
     timezone: z
@@ -255,6 +274,7 @@ export const settingsPatchSchema = z
   .partial()
   .openapi('SettingsPatch');
 
+/** The patch schema that validates each kind's request body. */
 export const PATCH_SCHEMAS = {
   task: taskPatchSchema,
   list: listPatchSchema,
@@ -275,12 +295,15 @@ const systemFields = {
   }),
 };
 
+/** Checklist item as stored and returned. */
 export const subtaskSchema = z
   .object({id: idSchema, title: z.string(), completed: z.boolean()})
   .openapi('Subtask');
+/** Related link as stored and returned. */
 export const linkSchema = z
   .object({id: idSchema, url: z.string(), title: z.string().nullable()})
   .openapi('Link');
+/** Reminder as stored and returned. */
 export const reminderSchema = z
   .object({id: idSchema, at: isoDateTimeSchema})
   .openapi('Reminder');
@@ -297,6 +320,7 @@ const recurrenceRuleSchema = z
   })
   .openapi('RecurrenceRule');
 
+/** A task entity as returned, read-only fields included. */
 export const taskSchema = z
   .object({
     ...systemFields,
@@ -328,6 +352,7 @@ export const taskSchema = z
   })
   .openapi('Task');
 
+/** A task list entity as returned. */
 export const listSchema = z
   .object({
     ...systemFields,
@@ -339,12 +364,15 @@ export const listSchema = z
     archived: z.boolean(),
   })
   .openapi('List');
+/** A folder entity as returned. */
 export const folderSchema = z
   .object({...systemFields, name: z.string(), sortOrder: z.number()})
   .openapi('Folder');
+/** A tag entity as returned. */
 export const tagSchema = z
   .object({...systemFields, name: z.string(), color: z.string().nullable()})
   .openapi('Tag');
+/** A user's settings entity as returned. */
 export const settingsSchema = z
   .object({
     ...systemFields,
@@ -357,14 +385,20 @@ export const settingsSchema = z
   .openapi('Settings');
 
 // Handlers build responses with toApiEntity(), whose ApiEntity type is looser
-// than the schemas above. These aliases type each schema by ApiEntity so
+// than the schemas above. These aliases retype each schema as ApiEntity so
 // routes need no casts; the OpenAPI document still uses the precise schemas.
+/** Types task responses for route handlers without a cast. */
 export const taskEntitySchema: z.ZodType<ApiEntity> = taskSchema;
+/** Types list responses for route handlers without a cast. */
 export const listEntitySchema: z.ZodType<ApiEntity> = listSchema;
+/** Types folder responses for route handlers without a cast. */
 export const folderEntitySchema: z.ZodType<ApiEntity> = folderSchema;
+/** Types tag responses for route handlers without a cast. */
 export const tagEntitySchema: z.ZodType<ApiEntity> = tagSchema;
+/** Types settings responses for route handlers without a cast. */
 export const settingsEntitySchema: z.ZodType<ApiEntity> = settingsSchema;
 
+/** The error envelope every failing request returns. */
 export const errorSchema = z
   .object({
     error: z.object({
@@ -375,6 +409,7 @@ export const errorSchema = z
   })
   .openapi('Error');
 
+/** One upsert, delete, or restore in a batch request. */
 export const mutationSchema = z
   .discriminatedUnion('op', [
     z.strictObject({
@@ -405,6 +440,7 @@ export const mutationSchema = z
   ])
   .openapi('Mutation');
 
+/** Any one stored entity, matched on its per-kind fields. */
 export const entitySchema: z.ZodType<ApiEntity> = z.union([
   taskSchema,
   listSchema,
@@ -413,6 +449,7 @@ export const entitySchema: z.ZodType<ApiEntity> = z.union([
   settingsSchema,
 ]);
 
+/** The outcome of one mutation, carrying the entity's latest state. */
 export const mutationResultSchema = z
   .object({
     index: z.int().openapi({description: '对应请求 mutations 数组的索引'}),
@@ -445,6 +482,7 @@ export const mutationResultSchema = z
   })
   .openapi('MutationResult');
 
+/** One entity change in a sync pull response. */
 export const changeSchema = z
   .object({type: kindSchema, entity: entitySchema})
   .openapi('Change');

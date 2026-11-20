@@ -30,8 +30,10 @@ function userId() {
     .references(() => users.id, {onDelete: 'cascade'});
 }
 
+/** How a session authenticates: GitHub OAuth login or personal token. */
 export type SessionKind = 'oauth' | 'pat';
 
+/** Accounts, their GitHub profile, sealed token, and settings copy. */
 export const users = pgTable('users', {
   id: bigint('id', {mode: 'number'}).primaryKey(),
   profile: jsonb('profile').$type<GithubProfile>().notNull(),
@@ -41,9 +43,15 @@ export const users = pgTable('users', {
   settings: jsonb('settings').$type<Settings>().notNull(),
   /** Last time GitHub accepted the stored token. */
   eligibilityCheckedAt: instant('eligibility_checked_at').notNull(),
-  /** Last time GitHub could not be reached, so outages are not retried per request. */
+  /**
+   * Last time GitHub could not be reached, so outages are not retried per
+   * request.
+   */
   eligibilityFailedAt: instant('eligibility_failed_at'),
-  /** Highest entity stamp handed out; each write transaction takes a newer one. */
+  /**
+   * Highest entity stamp handed out; each write transaction takes a newer
+   * one.
+   */
   lastStamp: instant('last_stamp').notNull(),
   /** Newest stamp among purged deletions; older sync cursors must resync. */
   purgedThrough: instant('purged_through'),
@@ -104,14 +112,20 @@ export const entities = pgTable(
     kind: text('kind').$type<Kind>().notNull(),
     id: text('id').notNull(),
     data: jsonb('data').$type<Record<string, unknown>>().notNull(),
-    /** Per-field last-writer-wins clock: client edit time (ms) of each field. */
+    /**
+     * Per-field last-writer-wins clock: client edit time (ms) of each
+     * field.
+     */
     clock: jsonb('clock').$type<Record<string, number>>().notNull(),
     rev: integer('rev').notNull(),
     createdAt: instant('created_at').notNull(),
     /** Stamp of the write transaction; sync cursors order by it. */
     updatedAt: instant('updated_at').notNull(),
     deletedAt: instant('deleted_at'),
-    /** "list:<id>" when a list deletion cascaded here; restoring it undoes this. */
+    /**
+     * "list:<id>" when a list deletion cascaded here; restoring it undoes
+     * this.
+     */
     deletedVia: text('deleted_via'),
     listId: text('list_id'),
     dueDate: calendarDate('due_date'),
@@ -166,10 +180,15 @@ export const pushSubscriptions = pgTable(
   table => [primaryKey({columns: [table.userId, table.endpoint]})],
 );
 
+/** A selected `users` row: profile, sealed token, and settings. */
 export type UserRow = typeof users.$inferSelect;
+/** A selected `sessions` row: login session or personal token. */
 export type SessionRow = typeof sessions.$inferSelect;
+/** A selected `usage_days` row: one user's counters for one day. */
 export type UsageDayRow = typeof usageDays.$inferSelect;
+/** A selected `entities` row, task columns included. */
 export type EntityRow = typeof entities.$inferSelect;
+/** A selected `push_subscriptions` row: endpoint and keys. */
 export type PushSubscriptionRow = typeof pushSubscriptions.$inferSelect;
 
 /** Payload of a reminder notification. */

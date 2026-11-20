@@ -3,8 +3,12 @@ import {DatabaseConnection} from './db/client';
 import {purgeExpiredData} from './store/housekeeping';
 import {sendDueReminders} from './store/push';
 
-// Keep in sync with `triggers.crons` in wrangler.jsonc.
+/**
+ * Fires every minute and sends the reminders that have come due. Keep it in
+ * sync with `triggers.crons` in wrangler.jsonc.
+ */
 export const REMINDER_CRON = '* * * * *';
+/** Fires hourly at :17 and purges sessions and trash that expired. */
 export const HOUSEKEEPING_CRON = '17 * * * *';
 
 /** Sends due reminders every minute and purges expired data hourly. */

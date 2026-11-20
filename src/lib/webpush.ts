@@ -5,6 +5,7 @@ import {
   utf8Encoder,
 } from './encoding';
 
+/** A browser push subscription endpoint and its client key material. */
 export interface PushTarget {
   endpoint: string;
   /**
@@ -14,6 +15,7 @@ export interface PushTarget {
   keys: {p256dh: string; auth: string};
 }
 
+/** Application server keys used to sign VAPID JWTs. */
 export interface VapidConfig {
   /** base64url 65-byte uncompressed P-256 public key */
   publicKey: string;
@@ -23,6 +25,7 @@ export interface VapidConfig {
   subject: string;
 }
 
+/** Per-message knobs for RFC 8030 delivery; all fields are optional. */
 export interface SendOptions {
   /** seconds the push service should keep the message; default 86400 */
   ttl?: number;
@@ -31,6 +34,7 @@ export interface SendOptions {
   topic?: string;
 }
 
+/** Delivery outcome reported by the push service. */
 export interface SendResult {
   ok: boolean;
   status: number;

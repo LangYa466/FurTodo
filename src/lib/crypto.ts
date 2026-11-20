@@ -10,6 +10,7 @@ import {
 // HKDF info, so keys for different purposes are independent. The strings are
 // part of the key derivation: changing one invalidates what it protects.
 type KeyPurpose = 'token-hmac' | 'state-aes' | 'ghtoken-aes';
+/** Key purposes that end in `-aes`, i.e. usable for authenticated sealing. */
 export type SealPurpose = Extract<KeyPurpose, `${string}-aes`>;
 
 const HKDF_SALT = utf8Encoder.encode('furtodo/v1');
@@ -65,10 +66,12 @@ function deriveKey(secret: string, purpose: KeyPurpose): Promise<CryptoKey> {
   return key;
 }
 
+/** Returns `byteLength` fresh CSPRNG bytes, base64url-encoded. */
 export function randomBase64Url(byteLength: number): string {
   return base64UrlEncode(crypto.getRandomValues(new Uint8Array(byteLength)));
 }
 
+/** Returns the SHA-256 digest of the UTF-8 bytes of `input`, base64url. */
 export async function sha256Base64Url(input: string): Promise<string> {
   const digest = await crypto.subtle.digest(
     'SHA-256',
@@ -115,6 +118,7 @@ async function hmacVerify(
 /** `ftk` is an access token, `ftc` a one-time login code. */
 export type TokenPrefix = 'ftk' | 'ftc';
 
+/** Identities bound into a token; both are validated before the HMAC. */
 export interface TokenClaims {
   userId: string;
   sessionId: string;
@@ -138,6 +142,10 @@ export async function signToken(
   return `${prefix}_${userId}.${sessionId}.${signature}`;
 }
 
+/**
+ * Verifies `token`'s HMAC and shape, then returns its claims. Returns null
+ * for anything malformed, so callers can treat a missing result as unauthentic.
+ */
 export async function verifyToken(
   secret: string,
   prefix: TokenPrefix,
@@ -167,7 +175,10 @@ export async function verifyToken(
   return valid ? {userId, sessionId} : null;
 }
 
-/** Encrypts `value` as JSON with AES-GCM; the output is base64url(iv || ciphertext). */
+/**
+ * Encrypts `value` as JSON with AES-GCM; the output is
+ * base64url(iv || ciphertext).
+ */
 export async function sealJson(
   secret: string,
   purpose: SealPurpose,

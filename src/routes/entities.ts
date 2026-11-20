@@ -45,6 +45,7 @@ const DEFAULT_TASK_LIMIT = 500;
 const MAX_TASK_LIMIT = 2000;
 const idParamSchema = z.object({id: idSchema});
 
+/** One entity read back, with the zone its dates were rendered in. */
 export interface EntityRead {
   entity: StoredEntity | null;
   timeZone: string;
@@ -365,6 +366,7 @@ const completeResponseSchema = z.object({
   spawned: z.array(taskEntitySchema).openapi({description: '重复任务的下一期'}),
 });
 
+/** Registers the task, list, folder, tag, and trash routes. */
 export function registerEntityRoutes(app: OpenAPIHono<AppEnv>): void {
   app.openapi(
     createRoute({

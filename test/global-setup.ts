@@ -95,6 +95,7 @@ async function migrateDatabase(url: string): Promise<void> {
   }
 }
 
+/** Starts or adopts a test database, migrates it, and returns its teardown. */
 export default async function setup(
   project: TestProject,
 ): Promise<() => Promise<void>> {

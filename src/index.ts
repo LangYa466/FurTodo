@@ -174,6 +174,7 @@ app.notFound(c =>
   ),
 );
 
+/** Worker entry point: the HTTP handler and the cron handler. */
 export default {
   fetch: app.fetch,
   scheduled: handleScheduled,

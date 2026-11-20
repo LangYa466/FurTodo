@@ -17,6 +17,7 @@ function testVapidKeys(): {publicKey: string; privateKey: string} {
 
 const vapid = testVapidKeys();
 
+/** Runs unit tests on Node and integration tests on workerd. */
 export default defineConfig({
   // The worker pool resolves require() calls in dependencies with the root
   // Vite server, and pg's require('pg-cloudflare') only finds the real
